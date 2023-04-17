@@ -49,6 +49,8 @@ require (
 	github.com/google/go-containerregistry/pkg/authn/k8schain v0.0.0-20230307034325-57f010d26af8
 	github.com/google/uuid v1.3.0
 	github.com/minio/minio-go/v7 v7.0.50
+	github.com/notaryproject/notation-core-go v1.0.0-rc.2
+	github.com/notaryproject/notation-go v1.0.0-rc.3
 	github.com/onsi/gomega v1.27.5
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/go-digest/blake3 v0.0.0-20220411205349-bde1400a84be
@@ -69,6 +71,7 @@ require (
 	k8s.io/apimachinery v0.26.3
 	k8s.io/client-go v0.26.3
 	k8s.io/utils v0.0.0-20230313181309-38a27ef9d749
+	oras.land/oras-go/v2 v2.0.2
 	sigs.k8s.io/cli-utils v0.34.0
 	sigs.k8s.io/controller-runtime v0.14.6
 	sigs.k8s.io/yaml v1.3.0
@@ -92,6 +95,7 @@ require (
 	github.com/Azure/go-autorest/autorest/date v0.3.0 // indirect
 	github.com/Azure/go-autorest/logger v0.2.1 // indirect
 	github.com/Azure/go-autorest/tracing v0.6.0 // indirect
+	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v0.9.0 // indirect
 	github.com/BurntSushi/toml v1.2.1 // indirect
 	github.com/MakeNowJust/heredoc v1.0.0 // indirect
@@ -180,11 +184,14 @@ require (
 	github.com/fluxcd/pkg/apis/acl v0.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/fullstorydev/grpcurl v1.8.7 // indirect
+	github.com/fxamacker/cbor/v2 v2.4.0 // indirect
+	github.com/go-asn1-ber/asn1-ber v1.5.4 // indirect
 	github.com/go-chi/chi v4.1.2+incompatible // indirect
 	github.com/go-errors/errors v1.4.2 // indirect
 	github.com/go-git/gcfg v1.5.0 // indirect
 	github.com/go-gorp/gorp/v3 v3.1.0 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.0 // indirect
+	github.com/go-ldap/ldap/v3 v3.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-logr/zapr v1.2.3 // indirect
 	github.com/go-openapi/analysis v0.21.4 // indirect
@@ -330,6 +337,8 @@ require (
 	github.com/transparency-dev/merkle v0.0.1 // indirect
 	github.com/urfave/cli v1.22.7 // indirect
 	github.com/vbatts/tar-split v0.11.2 // indirect
+	github.com/veraison/go-cose v1.0.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xanzy/go-gitlab v0.73.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
