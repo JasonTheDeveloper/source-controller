@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -72,6 +73,10 @@ import (
 	sreconcile "github.com/fluxcd/source-controller/internal/reconcile"
 	"github.com/fluxcd/source-controller/internal/reconcile/summarize"
 	"github.com/fluxcd/source-controller/internal/util"
+
+	_ "github.com/notaryproject/notation-core-go/signature/cose"
+	_ "github.com/notaryproject/notation-core-go/signature/jws"
+	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 )
 
 // ociRepositoryReadyCondition contains the information required to summarize a
@@ -440,7 +445,7 @@ func (r *OCIRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 			return sreconcile.ResultEmpty, e
 		}
 
-		err := r.verifySignature(ctx, obj, url, opts.verifyOpts...)
+		err := r.verifySignature(ctx, obj, url, opts.keychain, opts.verifyOpts...)
 		if err != nil {
 			provider := obj.Spec.Verify.Provider
 			if obj.Spec.Verify.SecretRef == nil {
@@ -627,7 +632,7 @@ func (r *OCIRepositoryReconciler) digestFromRevision(revision string) string {
 // verifySignature verifies the authenticity of the given image reference URL.
 // First, it tries to use a key if a Secret with a valid public key is provided.
 // If not, it falls back to a keyless approach for verification.
-func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv1.OCIRepository, url string, opt ...remote.Option) error {
+func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv1.OCIRepository, url string, auth authn.Keychain, opt ...remote.Option) error {
 	ctxTimeout, cancel := context.WithTimeout(ctx, obj.Spec.Timeout.Duration)
 	defer cancel()
 
@@ -700,6 +705,67 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 		}
 
 		return fmt.Errorf("no matching signatures were found for '%s'", url)
+	case "notation":
+		ref, err := name.ParseReference(url)
+		if err != nil {
+			return err
+		}
+
+		// get the public keys from the given secret
+		if secretRef := obj.Spec.Verify.SecretRef; secretRef != nil {
+			certSecretName := types.NamespacedName{
+				Namespace: obj.Namespace,
+				Name:      secretRef.Name,
+			}
+
+			var pubSecret corev1.Secret
+			if err := r.Get(ctxTimeout, certSecretName, &pubSecret); err != nil {
+				return err
+			}
+
+			var doc trustpolicy.Document
+
+			signatureVerified := false
+			for k, data := range pubSecret.Data {
+				if strings.HasSuffix(k, ".json") {
+					if err := json.Unmarshal(data, &doc); err != nil {
+						return err
+					}
+				}
+			}
+
+			defaultNotaryOciOpts := []soci.NotationOptions{
+				soci.WithTrustStore(&doc),
+				soci.WithNotaryRemoteOptions(opt...),
+			}
+
+			for k, data := range pubSecret.Data {
+				// search for public keys in the secret
+				if strings.HasSuffix(k, ".pem") {
+
+					verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicKey(data), soci.WithNotaryKeychain(auth))...)
+					if err != nil {
+						return err
+					}
+
+					signatures, err := verifier.Verify(ctxTimeout, ref)
+					if err != nil {
+						continue
+					}
+
+					if signatures {
+						signatureVerified = true
+						break
+					}
+				}
+			}
+
+			if !signatureVerified {
+				return fmt.Errorf("no matching signatures were found for '%s'", url)
+			}
+			return nil
+		}
+		return nil
 	}
 
 	return nil
@@ -1197,6 +1263,8 @@ func makeRemoteOptions(ctxTimeout context.Context, obj *ociv1.OCIRepository, tra
 		verifyOpts: []remote.Option{},
 	}
 
+	o.keychain = keychain
+
 	if transport != nil {
 		o.craneOpts = append(o.craneOpts, crane.WithTransport(transport))
 		o.verifyOpts = append(o.verifyOpts, remote.WithTransport(transport))
@@ -1221,6 +1289,7 @@ func makeRemoteOptions(ctxTimeout context.Context, obj *ociv1.OCIRepository, tra
 type remoteOptions struct {
 	craneOpts  []crane.Option
 	verifyOpts []remote.Option
+	keychain   authn.Keychain
 }
 
 // ociContentConfigChanged evaluates the current spec with the observations
