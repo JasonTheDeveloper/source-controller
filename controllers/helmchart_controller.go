@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 	"github.com/opencontainers/go-digest"
 	helmgetter "helm.sh/helm/v3/pkg/getter"
 	helmreg "helm.sh/helm/v3/pkg/registry"
@@ -1441,6 +1443,47 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, err
 		}
 		verifiers = append(verifiers, verifier)
+		return verifiers, nil
+	case "notation":
+		// get the public keys from the given secret
+		if secretRef := obj.Spec.Verify.SecretRef; secretRef != nil {
+			certSecretName := types.NamespacedName{
+				Namespace: obj.Namespace,
+				Name:      secretRef.Name,
+			}
+
+			var pubSecret corev1.Secret
+			if err := r.Get(ctx, certSecretName, &pubSecret); err != nil {
+				return nil, err
+			}
+
+			var doc trustpolicy.Document
+
+			for k, data := range pubSecret.Data {
+				if strings.HasSuffix(k, ".json") {
+					if err := json.Unmarshal(data, &doc); err != nil {
+						return nil, err
+					}
+				}
+			}
+
+			defaultNotaryOciOpts := []soci.NotationOptions{
+				soci.WithTrustStore(&doc),
+				soci.WithNotaryRemoteOptions(verifyOpts...),
+			}
+
+			for k, data := range pubSecret.Data {
+				// search for public keys in the secret
+				if strings.HasSuffix(k, ".pem") {
+
+					verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicKey(data), soci.WithNotaryKeychain(keychain))...)
+					if err != nil {
+						return nil, err
+					}
+					verifiers = append(verifiers, verifier)
+				}
+			}
+		}
 		return verifiers, nil
 	default:
 		return nil, fmt.Errorf("unsupported verification provider: %s", obj.Spec.Verify.Provider)
