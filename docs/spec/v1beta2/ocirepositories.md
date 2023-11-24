@@ -157,14 +157,20 @@ to the IAM role when using IRSA.
 
 #### Azure
 
-The `azure` provider can be used to authenticate automatically using kubelet
-managed identity or Azure Active Directory pod-managed identity (aad-pod-identity),
+The `azure` provider can be used to authenticate automatically using Workload Identity, Kubelet Managed
+Identity or Azure Active Directory pod-managed identity (aad-pod-identity),
 and by extension gain access to ACR.
 
 ##### Kubelet Managed Identity
 
 When the kubelet managed identity has access to ACR, source-controller running
 on it will also have access to ACR.
+
+**Note:** If you have more than one identity configured on the cluster, you have to specify which one to use
+by setting the `AZURE_CLIENT_ID` environment variable in the source-controller deployment.
+
+If you are running into further issues, please look at the
+[troubleshooting guide](https://github.com/Azure/azure-sdk-for-go/blob/main/sdk/azidentity/TROUBLESHOOTING.md#azure-virtual-machine-managed-identity).
 
 ##### Workload Identity
 
@@ -203,13 +209,17 @@ patches:
               azure.workload.identity/use: "true"
 ```
 
-To use Workload Identity, you have to install the Workload Identity
-mutating webhook and create an identity that has access to ACR. Next, establish 
-a federated identity between the source-controller ServiceAccount and the 
-identity. Patch the source-controller Pod and ServiceAccount as shown in the patch
+Ensure Workload Identity is properly set up on your cluster and the mutating webhook is installed.
+Create an identity that has access to ACR. Next, establish
+a federated identity between the source-controller ServiceAccount and the
+identity. Patch the source-controller Deployment and ServiceAccount as shown in the patch
 above. Please take a look at this [guide](https://azure.github.io/azure-workload-identity/docs/quick-start.html#6-establish-federated-identity-credential-between-the-identity-and-the-service-account-issuer--subject).
 
-##### AAD Pod Identity
+##### Deprecated: AAD Pod Identity
+
+**Note:** The AAD Pod Identity project will be archived in [September 2023](https://github.com/Azure/aad-pod-identity#-announcement),
+and you are advised to use Workload Identity instead.
+
 When using aad-pod-identity to enable access to ACR, add the following patch to
 your bootstrap repository, in the `flux-system/kustomization.yaml` file:
 
@@ -234,7 +244,7 @@ has to be used to give the `source-controller` pod access to the ACR.
 To do this, you have to install `aad-pod-identity` on your cluster, create a managed identity
 that has access to the container registry (this can also be the Kubelet identity
 if it has `AcrPull` role assignment on the ACR), create an `AzureIdentity` and `AzureIdentityBinding`
-that describe the managed identity and then label the `source-controller` pods
+that describe the managed identity and then label the `source-controller` deployment
 with the name of the AzureIdentity as shown in the patch above. Please take a look
 at [this guide](https://azure.github.io/aad-pod-identity/docs/) or
 [this one](https://docs.microsoft.com/en-us/azure/aks/use-azure-ad-pod-identity)
@@ -300,41 +310,61 @@ fetch the image pull secrets attached to the service account and use them for au
 **Note:** that for a publicly accessible image repository, you don't need to provide a `secretRef`
 nor `serviceAccountName`.
 
-### TLS Certificates
+### Cert secret reference
 
-`.spec.certSecretRef` field names a secret with TLS certificate data. This is for two separate
-purposes:
+`.spec.certSecretRef.name` is an optional field to specify a secret containing
+TLS certificate data. The secret can contain the following keys:
 
-- to provide a client certificate and private key, if you use a certificate to authenticate with
-  the container registry; and,
-- to provide a CA certificate, if the registry uses a self-signed certificate.
+* `tls.crt` and `tls.key`, to specify the client certificate and private key used
+for TLS client authentication. These must be used in conjunction, i.e.
+specifying one without the other will lead to an error.
+* `ca.crt`, to specify the CA certificate used to verify the server, which is
+required if the server is using a self-signed certificate.
 
-These will often go together, if you are hosting a container registry yourself. All the files in the
-secret are expected to be [PEM-encoded][pem-encoding]. This is an ASCII format for certificates and
-keys; `openssl` and such tools will typically give you an option of PEM output.
+If the server is using a self-signed certificate and has TLS client
+authentication enabled, all three values are required.
 
-Assuming you have obtained a certificate file and private key and put them in the files `client.crt`
-and `client.key` respectively, you can create a secret with `kubectl` like this:
+The Secret should be of type `Opaque` or `kubernetes.io/tls`. All the files in
+the Secret are expected to be [PEM-encoded][pem-encoding]. Assuming you have
+three files; `client.key`, `client.crt` and `ca.crt` for the client private key,
+client certificate and the CA certificate respectively, you can generate the
+required Secret using the `flux create secret tls` command:
 
-```bash
-kubectl create secret generic tls-certs \
-  --from-file=certFile=client.crt \
-  --from-file=keyFile=client.key
+```sh
+flux create secret tls --tls-key-file=client.key --tls-crt-file=client.crt --ca-crt-file=ca.crt
 ```
 
-You could also [prepare a secret and encrypt it][sops-guide]; the important bit is that the data
-keys in the secret are `certFile` and `keyFile`.
+Example usage:
 
-If you have a CA certificate for the client to use, the data key for that is `caFile`. Adapting the
-previous example, if you have the certificate in the file `ca.crt`, and the client certificate and
-key as before, the whole command would be:
-
-```bash
-kubectl create secret generic tls-certs \
-  --from-file=certFile=client.crt \
-  --from-file=keyFile=client.key \
-  --from-file=caFile=ca.crt
+```yaml
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  name: example
+  namespace: default
+spec:
+  interval: 5m0s
+  url: oci://example.com
+  certSecretRef:
+    name: example-tls
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: example-tls
+  namespace: default
+type: kubernetes.io/tls # or Opaque
+data:
+  tls.crt: <BASE64>
+  tls.key: <BASE64>
+  # NOTE: Can be supplied without the above values
+  ca.crt: <BASE64>
 ```
+
+**Warning:** Support for the `caFile`, `certFile` and `keyFile` keys have been
+deprecated. If you have any Secrets using these keys and specified in an
+OCIRepository, the controller will log a deprecation warning.
 
 ### Insecure
 
@@ -354,6 +384,11 @@ e.g. `10m0s` to reconcile the object every 10 minutes.
 
 If the `.metadata.generation` of a resource changes (due to e.g. a change to
 the spec), this is handled instantly outside the interval window.
+
+**Note:** The controller can be configured to apply a jitter to the interval in
+order to distribute the load more evenly when multiple OCIRepository objects are
+set up with the same interval. For more information, please refer to the
+[source-controller configuration options](https://fluxcd.io/flux/components/source/options/).
 
 ### Timeout
 
@@ -466,11 +501,13 @@ for more information.
 ### Verification
 
 `.spec.verify` is an optional field to enable the verification of [Cosign](https://github.com/sigstore/cosign)
-signatures. The field offers two subfields:
+signatures. The field offers three subfields:
 
 - `.provider`, to specify the verification provider. Only supports `cosign` at present.
 - `.secretRef.name`, to specify a reference to a Secret in the same namespace as
   the OCIRepository, containing the Cosign public keys of trusted authors.
+- `.matchOIDCIdentity`, to specify a list of OIDC identity matchers. Please see
+   [Keyless verification](#keyless-verification) for more details.
 
 ```yaml
 ---
@@ -520,6 +557,18 @@ For publicly available OCI artifacts, which are signed using the
 [Cosign Keyless](https://github.com/sigstore/cosign/blob/main/KEYLESS.md) procedure,
 you can enable the verification by omitting the `.verify.secretRef` field.
 
+To verify the identity's subject and the OIDC issuer present in the Fulcio
+certificate, you can specify a list of OIDC identity matchers using
+`.spec.verify.matchOIDCIdentity`. The matcher provides two required fields:
+
+- `.issuer`, to specify a regexp that matches against the OIDC issuer.
+- `.subject`, to specify a regexp that matches against the subject identity in
+   the certificate.
+Both values should follow the [Go regular expression syntax](https://golang.org/s/re2syntax).
+
+The matchers are evaluated in an OR fashion, i.e. the identity is deemed to be
+verified if any one matcher successfully matches against the identity.
+
 Example of verifying artifacts signed by the
 [Cosign GitHub Action](https://github.com/sigstore/cosign-installer) with GitHub OIDC Token:
 
@@ -533,6 +582,9 @@ spec:
   url: oci://ghcr.io/stefanprodan/manifests/podinfo
   verify:
     provider: cosign
+    matchOIDCIdentity:
+      - issuer: "^https://token.actions.githubusercontent.com$"
+        subject: "^https://github.com/stefanprodan/podinfo.*$"
 ```
 
 The controller verifies the signatures using the Fulcio root CA and the Rekor
@@ -609,7 +661,7 @@ flux reconcile source oci <repository-name>
 ### Waiting for `Ready`
 
 When a change is applied, it is possible to wait for the OCIRepository to reach
-a [ready state](#ready-gitrepository) using `kubectl`:
+a [ready state](#ready-ocirepository) using `kubectl`:
 
 ```sh
 kubectl wait gitrepository/<repository-name> --for=condition=ready --timeout=1m
@@ -866,8 +918,8 @@ following attributes in the OCIRepository's `.status.conditions`:
 - `reason: Succeeded`
 
 This `Ready` Condition will retain a status value of `"True"` until the
-OCIRepository is marked as [reconciling](#reconciling-gitrepository), or e.g. a
-[transient error](#failed-gitrepository) occurs due to a temporary network issue.
+OCIRepository is marked as [reconciling](#reconciling-ocirepository), or e.g. a
+[transient error](#failed-ocirepository) occurs due to a temporary network issue.
 
 When the OCIRepository Artifact is archived in the controller's Artifact
 storage, the controller sets a Condition with the following attributes in the

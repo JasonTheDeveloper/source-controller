@@ -439,8 +439,8 @@ data:
 
 ##### Workload Identity
 
-If you have [Workload Identity mutating webhook](https://azure.github.io/azure-workload-identity/docs/installation/managed-clusters.html)
-installed on your cluster. You need to create an Azure Identity and give it
+If you have [Workload Identity](https://azure.github.io/azure-workload-identity/docs/installation/managed-clusters.html)
+set up on your cluster, you need to create an Azure Identity and give it
 access to Azure Blob Storage.
 
 ```shell
@@ -465,7 +465,7 @@ az identity federated-credential create \
   --subject "system:serviceaccount:flux-system:source-controller"
 ```
 
-Add a patch to label and annotate the source-controller Pods and ServiceAccount
+Add a patch to label and annotate the source-controller Deployment and ServiceAccount
 correctly so that it can match an identity binding:
 
 ```yaml
@@ -501,7 +501,7 @@ patches:
 ```
 
 If you have set up Workload Identity correctly and labeled the source-controller
-Pod and ServiceAccount, then you don't need to reference a Secret. For more information,
+Deployment and ServiceAccount, then you don't need to reference a Secret. For more information,
 please see [documentation](https://azure.github.io/azure-workload-identity/docs/quick-start.html).
 
 ```yaml
@@ -517,7 +517,7 @@ spec:
   endpoint: https://testfluxsas.blob.core.windows.net
 ```
 
-##### Managed Identity with AAD Pod Identity
+##### Deprecated: Managed Identity with AAD Pod Identity
 
 If you are using [aad pod identity](https://azure.github.io/aad-pod-identity/docs),
 You need to create an Azure Identity and give it access to Azure Blob Storage.
@@ -561,7 +561,7 @@ spec:
   selector: ${IDENTITY_NAME}
 ```
 
-Label the source-controller correctly so that it can match an identity binding:
+Label the source-controller Deployment correctly so that it can match an identity binding:
 
 ```yaml
 apiVersion: apps/v1
@@ -577,7 +577,7 @@ spec:
 ```
 
 If you have set up aad-pod-identity correctly and labeled the source-controller
-Pod, then you don't need to reference a Secret.
+Deployment, then you don't need to reference a Secret.
 
 ```yaml
 apiVersion: source.toolkit.fluxcd.io/v1beta2
@@ -724,7 +724,7 @@ Where the (base64 decoded) value of `.data.serviceaccount` looks like this:
 
 ### Interval
 
-`.spec.interval` is a required field that specifices the interval which the
+`.spec.interval` is a required field that specifies the interval which the
 object storage bucket must be consulted at.
 
 After successfully reconciling a Bucket object, the source-controller requeues
@@ -733,7 +733,12 @@ the object for inspection after the specified interval. The value must be in a
 e.g. `10m0s` to look at the object storage bucket every 10 minutes.
 
 If the `.metadata.generation` of a resource changes (due to e.g. the apply of a
-change to the spec), this is handled instantly outside of the interval window.
+change to the spec), this is handled instantly outside the interval window.
+
+**Note:** The controller can be configured to apply a jitter to the interval in
+order to distribute the load more evenly when multiple Bucket objects are set up
+with the same interval. For more information, please refer to the
+[source-controller configuration options](https://fluxcd.io/flux/components/source/options/).
 
 ### Endpoint
 
@@ -779,6 +784,15 @@ Secret in the same namespace as the Bucket, containing authentication
 credentials for the object storage. For some `.spec.provider` implementations
 the presence of the field is required, see [Provider](#provider) for more
 details and examples.
+
+### Prefix
+
+`.spec.prefix` is an optional field to enable server-side filtering
+of files in the Bucket.
+
+**Note:** The server-side filtering works only with the `generic`, `aws`
+and `gcp` [provider](#provider) and is preferred over [`.spec.ignore`](#ignore)
+as a more efficient way of excluding files. 
 
 ### Ignore
 

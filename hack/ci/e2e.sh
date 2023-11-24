@@ -75,7 +75,6 @@ kubectl -n source-system rollout status deploy/source-controller --timeout=1m
 kubectl -n source-system wait gitrepository/gitrepository-sample --for=condition=ready --timeout=1m
 kubectl -n source-system wait ocirepository/ocirepository-sample --for=condition=ready --timeout=1m
 kubectl -n source-system wait helmrepository/helmrepository-sample --for=condition=ready --timeout=1m
-kubectl -n source-system wait helmrepository/helmrepository-sample-oci --for=condition=ready --timeout=1m
 kubectl -n source-system wait helmchart/helmchart-sample --for=condition=ready --timeout=1m
 kubectl -n source-system wait helmchart/helmchart-sample-oci --for=condition=ready --timeout=1m
 kubectl -n source-system delete -f "${ROOT_DIR}/config/samples"
@@ -133,7 +132,7 @@ kubectl -n source-system wait bucket/podinfo --for=condition=ready --timeout=1m
 
 echo "Run HelmChart from Bucket tests"
 "${BUILD_DIR}/mc" mb minio/charts
-"${BUILD_DIR}/mc" mirror "${ROOT_DIR}/controllers/testdata/charts/helmchart/" minio/charts/helmchart
+"${BUILD_DIR}/mc" mirror "${ROOT_DIR}/internal/controller/testdata/charts/helmchart/" minio/charts/helmchart
 
 kubectl -n source-system apply -f "${ROOT_DIR}/config/testdata/helmchart-from-bucket/source.yaml"
 kubectl -n source-system wait bucket/charts --for=condition=ready --timeout=1m
@@ -145,7 +144,6 @@ kubectl -n source-system wait gitrepository/large-repo --for=condition=ready --t
 
 echo "Run HelmChart from OCI registry tests"
 kubectl -n source-system apply -f "${ROOT_DIR}/config/testdata/helmchart-from-oci/source.yaml"
-kubectl -n source-system wait helmrepository/podinfo --for=condition=ready --timeout=1m
 kubectl -n source-system wait helmchart/podinfo --for=condition=ready --timeout=1m
 kubectl -n source-system wait helmchart/podinfo-keyless --for=condition=ready --timeout=1m
 

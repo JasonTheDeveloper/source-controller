@@ -14,20 +14,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"log"
 	"math/rand"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/foxcpp/go-mockdns"
 	"github.com/phayes/freeport"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
@@ -37,6 +42,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/distribution/distribution/v3/configuration"
 	dcontext "github.com/distribution/distribution/v3/context"
@@ -45,14 +51,13 @@ import (
 	_ "github.com/distribution/distribution/v3/registry/storage/driver/inmemory"
 
 	"github.com/fluxcd/pkg/runtime/controller"
+	"github.com/fluxcd/pkg/runtime/metrics"
 	"github.com/fluxcd/pkg/runtime/testenv"
 	"github.com/fluxcd/pkg/testserver"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	sourcev1beta2 "github.com/fluxcd/source-controller/api/v1beta2"
 	"github.com/fluxcd/source-controller/internal/cache"
-	"github.com/fluxcd/source-controller/internal/features"
-	"github.com/fluxcd/source-controller/internal/helm/registry"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -76,6 +81,7 @@ const (
 )
 
 var (
+	k8sClient    client.Client
 	testEnv      *testenv.Environment
 	testStorage  *Storage
 	testServer   *testserver.ArtifactServer
@@ -97,9 +103,11 @@ var (
 )
 
 var (
-	tlsPublicKey  []byte
-	tlsPrivateKey []byte
-	tlsCA         []byte
+	tlsPublicKey     []byte
+	tlsPrivateKey    []byte
+	tlsCA            []byte
+	clientPublicKey  []byte
+	clientPrivateKey []byte
 )
 
 var (
@@ -107,20 +115,18 @@ var (
 	testCache          *cache.Cache
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 type registryClientTestServer struct {
 	out            io.Writer
 	registryHost   string
 	workspaceDir   string
 	registryClient *helmreg.Client
+	dnsServer      *mockdns.Server
 }
 
 type registryOptions struct {
-	withBasicAuth bool
-	withTLS       bool
+	withBasicAuth      bool
+	withTLS            bool
+	withClientCertAuth bool
 }
 
 func setupRegistryServer(ctx context.Context, workspaceDir string, opts registryOptions) (*registryClientTestServer, error) {
@@ -135,15 +141,11 @@ func setupRegistryServer(ctx context.Context, workspaceDir string, opts registry
 	var out bytes.Buffer
 	server.out = &out
 
-	// init test client
-	client, err := helmreg.NewClient(
+	// init test client options
+	clientOpts := []helmreg.ClientOption{
 		helmreg.ClientOptDebug(true),
 		helmreg.ClientOptWriter(server.out),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create registry client: %s", err)
 	}
-	server.registryClient = client
 
 	config := &configuration.Configuration{}
 	port, err := freeport.GetFreePort()
@@ -151,8 +153,25 @@ func setupRegistryServer(ctx context.Context, workspaceDir string, opts registry
 		return nil, fmt.Errorf("failed to get free port: %s", err)
 	}
 
-	server.registryHost = fmt.Sprintf("localhost:%d", port)
-	config.HTTP.Addr = fmt.Sprintf("127.0.0.1:%d", port)
+	// Change the registry host to a host which is not localhost and
+	// mock DNS to map example.com to 127.0.0.1.
+	// This is required because Docker enforces HTTP if the registry
+	// is hosted on localhost/127.0.0.1.
+	server.registryHost = fmt.Sprintf("example.com:%d", port)
+	// Disable DNS server logging as it is extremely chatty.
+	dnsLog := log.Default()
+	dnsLog.SetOutput(io.Discard)
+	server.dnsServer, err = mockdns.NewServerWithLogger(map[string]mockdns.Zone{
+		"example.com.": {
+			A: []string{"127.0.0.1"},
+		},
+	}, dnsLog, false)
+	if err != nil {
+		return nil, err
+	}
+	server.dnsServer.PatchNet(net.DefaultResolver)
+
+	config.HTTP.Addr = fmt.Sprintf(":%d", port)
 	config.HTTP.DrainTimeout = time.Duration(10) * time.Second
 	config.Storage = map[string]configuration.Parameters{"inmemory": map[string]interface{}{}}
 
@@ -164,8 +183,7 @@ func setupRegistryServer(ctx context.Context, workspaceDir string, opts registry
 		}
 
 		htpasswdPath := filepath.Join(workspaceDir, testRegistryHtpasswdFileBasename)
-		err = ioutil.WriteFile(htpasswdPath, []byte(fmt.Sprintf("%s:%s\n", testRegistryUsername, string(pwBytes))), 0644)
-		if err != nil {
+		if err = os.WriteFile(htpasswdPath, []byte(fmt.Sprintf("%s:%s\n", testRegistryUsername, string(pwBytes))), 0644); err != nil {
 			return nil, fmt.Errorf("failed to create htpasswd file: %s", err)
 		}
 
@@ -181,6 +199,19 @@ func setupRegistryServer(ctx context.Context, workspaceDir string, opts registry
 	if opts.withTLS {
 		config.HTTP.TLS.Certificate = "testdata/certs/server.pem"
 		config.HTTP.TLS.Key = "testdata/certs/server-key.pem"
+		// Configure CA certificates only if client cert authentication is enabled.
+		if opts.withClientCertAuth {
+			config.HTTP.TLS.ClientCAs = []string{"testdata/certs/ca.pem"}
+		}
+
+		// add TLS configured HTTP client option to clientOpts
+		httpClient, err := tlsConfiguredHTTPCLient()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create TLS configured HTTP client: %s", err)
+		}
+		clientOpts = append(clientOpts, helmreg.ClientOptHTTPClient(httpClient))
+	} else {
+		clientOpts = append(clientOpts, helmreg.ClientOptPlainHTTP())
 	}
 
 	// setup logger options
@@ -195,10 +226,46 @@ func setupRegistryServer(ctx context.Context, workspaceDir string, opts registry
 		return nil, fmt.Errorf("failed to create docker registry: %w", err)
 	}
 
+	// init test client
+	client, err := helmreg.NewClient(clientOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create registry client: %s", err)
+	}
+	server.registryClient = client
+
 	// Start Docker registry
 	go dockerRegistry.ListenAndServe()
 
 	return server, nil
+}
+
+func tlsConfiguredHTTPCLient() (*http.Client, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(tlsCA) {
+		return nil, fmt.Errorf("failed to append CA certificate to pool")
+	}
+	cert, err := tls.LoadX509KeyPair("testdata/certs/server.pem", "testdata/certs/server-key.pem")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load server certificate: %s", err)
+	}
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs: pool,
+				Certificates: []tls.Certificate{
+					cert,
+				},
+			},
+		},
+	}
+	return httpClient, nil
+}
+
+func (r *registryClientTestServer) Close() {
+	if r.dnsServer != nil {
+		mockdns.UnpatchNet(net.DefaultResolver)
+		r.dnsServer.Close()
+	}
 }
 
 func TestMain(m *testing.M) {
@@ -207,9 +274,18 @@ func TestMain(m *testing.M) {
 	utilruntime.Must(sourcev1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(sourcev1beta2.AddToScheme(scheme.Scheme))
 
-	testEnv = testenv.New(testenv.WithCRDPath(filepath.Join("..", "config", "crd", "bases")))
+	testEnv = testenv.New(
+		testenv.WithCRDPath(filepath.Join("..", "..", "config", "crd", "bases")),
+		testenv.WithMaxConcurrentReconciles(4),
+	)
 
 	var err error
+	// Initialize a cacheless client for tests that need the latest objects.
+	k8sClient, err = client.New(testEnv.Config, client.Options{Scheme: scheme.Scheme})
+	if err != nil {
+		panic(fmt.Sprintf("failed to create k8s client: %v", err))
+	}
+
 	testServer, err = testserver.NewTempArtifactServer()
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create a temporary storage server: %v", err))
@@ -222,7 +298,7 @@ func TestMain(m *testing.M) {
 		panic(fmt.Sprintf("Failed to create a test storage: %v", err))
 	}
 
-	testMetricsH = controller.MustMakeMetrics(testEnv)
+	testMetricsH = controller.NewMetrics(testEnv, metrics.MustMakeRecorder(), sourcev1.SourceFinalizer)
 
 	testWorkspaceDir, err := os.MkdirTemp("", "registry-test-")
 	if err != nil {
@@ -234,15 +310,13 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create a test registry server: %v", err))
 	}
+	defer testRegistryServer.Close()
 
 	if err := (&GitRepositoryReconciler{
 		Client:        testEnv,
 		EventRecorder: record.NewFakeRecorder(32),
 		Metrics:       testMetricsH,
 		Storage:       testStorage,
-		features: map[string]bool{
-			features.OptimizedGitClones: true,
-		},
 	}).SetupWithManagerAndOptions(testEnv, GitRepositoryReconcilerOptions{
 		RateLimiter: controller.GetDefaultRateLimiter(),
 	}); err != nil {
@@ -289,18 +363,6 @@ func TestMain(m *testing.M) {
 		panic(fmt.Sprintf("Failed to start HelmRepositoryReconciler: %v", err))
 	}
 
-	if err = (&HelmRepositoryOCIReconciler{
-		Client:                  testEnv,
-		EventRecorder:           record.NewFakeRecorder(32),
-		Metrics:                 testMetricsH,
-		Getters:                 testGetters,
-		RegistryClientGenerator: registry.ClientGenerator,
-	}).SetupWithManagerAndOptions(testEnv, HelmRepositoryReconcilerOptions{
-		RateLimiter: controller.GetDefaultRateLimiter(),
-	}); err != nil {
-		panic(fmt.Sprintf("Failed to start HelmRepositoryOCIReconciler: %v", err))
-	}
-
 	if err := (&HelmChartReconciler{
 		Client:        testEnv,
 		EventRecorder: record.NewFakeRecorder(32),
@@ -310,7 +372,7 @@ func TestMain(m *testing.M) {
 		Cache:         testCache,
 		TTL:           1 * time.Second,
 		CacheRecorder: cacheRecorder,
-	}).SetupWithManagerAndOptions(testEnv, HelmChartReconcilerOptions{
+	}).SetupWithManagerAndOptions(ctx, testEnv, HelmChartReconcilerOptions{
 		RateLimiter: controller.GetDefaultRateLimiter(),
 	}); err != nil {
 		panic(fmt.Sprintf("Failed to start HelmChartReconciler: %v", err))
@@ -355,6 +417,14 @@ func initTestTLS() {
 		panic(err)
 	}
 	tlsCA, err = os.ReadFile("testdata/certs/ca.pem")
+	if err != nil {
+		panic(err)
+	}
+	clientPrivateKey, err = os.ReadFile("testdata/certs/client-key.pem")
+	if err != nil {
+		panic(err)
+	}
+	clientPublicKey, err = os.ReadFile("testdata/certs/client.pem")
 	if err != nil {
 		panic(err)
 	}

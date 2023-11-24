@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"context"
@@ -32,14 +32,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
-	kstatus "sigs.k8s.io/cli-utils/pkg/kstatus/status"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	kstatus "github.com/fluxcd/cli-utils/pkg/kstatus/status"
 	"github.com/fluxcd/pkg/apis/meta"
 	"github.com/fluxcd/pkg/runtime/conditions"
 	conditionscheck "github.com/fluxcd/pkg/runtime/conditions/check"
+	"github.com/fluxcd/pkg/runtime/jitter"
 	"github.com/fluxcd/pkg/runtime/patch"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -54,6 +55,42 @@ import (
 
 // Environment variable to set the GCP Storage host for the GCP client.
 const EnvGcpStorageHost = "STORAGE_EMULATOR_HOST"
+
+func TestBucketReconciler_deleteBeforeFinalizer(t *testing.T) {
+	g := NewWithT(t)
+
+	namespaceName := "bucket-" + randStringRunes(5)
+	namespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: namespaceName},
+	}
+	g.Expect(k8sClient.Create(ctx, namespace)).ToNot(HaveOccurred())
+	t.Cleanup(func() {
+		g.Expect(k8sClient.Delete(ctx, namespace)).NotTo(HaveOccurred())
+	})
+
+	bucket := &bucketv1.Bucket{}
+	bucket.Name = "test-bucket"
+	bucket.Namespace = namespaceName
+	bucket.Spec = bucketv1.BucketSpec{
+		Interval:   metav1.Duration{Duration: interval},
+		BucketName: "foo",
+		Endpoint:   "bar",
+	}
+	// Add a test finalizer to prevent the object from getting deleted.
+	bucket.SetFinalizers([]string{"test-finalizer"})
+	g.Expect(k8sClient.Create(ctx, bucket)).NotTo(HaveOccurred())
+	// Add deletion timestamp by deleting the object.
+	g.Expect(k8sClient.Delete(ctx, bucket)).NotTo(HaveOccurred())
+
+	r := &BucketReconciler{
+		Client:        k8sClient,
+		EventRecorder: record.NewFakeRecorder(32),
+		Storage:       testStorage,
+	}
+	// NOTE: Only a real API server responds with an error in this scenario.
+	_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(bucket)})
+	g.Expect(err).NotTo(HaveOccurred())
+}
 
 func TestBucketReconciler_Reconcile(t *testing.T) {
 	g := NewWithT(t)
@@ -177,17 +214,17 @@ func TestBucketReconciler_reconcileStorage(t *testing.T) {
 						Path:     fmt.Sprintf("/reconcile-storage/%s.txt", v),
 						Revision: v,
 					}
-					if err := testStorage.MkdirAll(*obj.Status.Artifact); err != nil {
+					if err := storage.MkdirAll(*obj.Status.Artifact); err != nil {
 						return err
 					}
-					if err := testStorage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader(v), 0o640); err != nil {
+					if err := storage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader(v), 0o640); err != nil {
 						return err
 					}
 					if n != len(revisions)-1 {
 						time.Sleep(time.Second * 1)
 					}
 				}
-				testStorage.SetArtifactURL(obj.Status.Artifact)
+				storage.SetArtifactURL(obj.Status.Artifact)
 				conditions.MarkTrue(obj, meta.ReadyCondition, "foo", "bar")
 				return nil
 			},
@@ -221,10 +258,10 @@ func TestBucketReconciler_reconcileStorage(t *testing.T) {
 			name: "notices missing artifact in storage",
 			beforeFunc: func(obj *bucketv1.Bucket, storage *Storage) error {
 				obj.Status.Artifact = &sourcev1.Artifact{
-					Path:     fmt.Sprintf("/reconcile-storage/invalid.txt"),
+					Path:     "/reconcile-storage/invalid.txt",
 					Revision: "d",
 				}
-				testStorage.SetArtifactURL(obj.Status.Artifact)
+				storage.SetArtifactURL(obj.Status.Artifact)
 				return nil
 			},
 			want: sreconcile.ResultSuccess,
@@ -237,18 +274,80 @@ func TestBucketReconciler_reconcileStorage(t *testing.T) {
 			},
 		},
 		{
+			name: "notices empty artifact digest",
+			beforeFunc: func(obj *bucketv1.Bucket, storage *Storage) error {
+				f := "empty-digest.txt"
+
+				obj.Status.Artifact = &sourcev1.Artifact{
+					Path:     fmt.Sprintf("/reconcile-storage/%s.txt", f),
+					Revision: "fake",
+				}
+
+				if err := storage.MkdirAll(*obj.Status.Artifact); err != nil {
+					return err
+				}
+				if err := storage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader(f), 0o600); err != nil {
+					return err
+				}
+
+				// Overwrite with a different digest
+				obj.Status.Artifact.Digest = ""
+
+				return nil
+			},
+			want: sreconcile.ResultSuccess,
+			assertPaths: []string{
+				"!/reconcile-storage/empty-digest.txt",
+			},
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: disappeared from storage"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: disappeared from storage"),
+			},
+		},
+		{
+			name: "notices artifact digest mismatch",
+			beforeFunc: func(obj *bucketv1.Bucket, storage *Storage) error {
+				f := "digest-mismatch.txt"
+
+				obj.Status.Artifact = &sourcev1.Artifact{
+					Path:     fmt.Sprintf("/reconcile-storage/%s.txt", f),
+					Revision: "fake",
+				}
+
+				if err := storage.MkdirAll(*obj.Status.Artifact); err != nil {
+					return err
+				}
+				if err := storage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader(f), 0o600); err != nil {
+					return err
+				}
+
+				// Overwrite with a different digest
+				obj.Status.Artifact.Digest = "sha256:6c329d5322473f904e2f908a51c12efa0ca8aa4201dd84f2c9d203a6ab3e9023"
+
+				return nil
+			},
+			want: sreconcile.ResultSuccess,
+			assertPaths: []string{
+				"!/reconcile-storage/digest-mismatch.txt",
+			},
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: disappeared from storage"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: disappeared from storage"),
+			},
+		},
+		{
 			name: "updates hostname on diff from current",
 			beforeFunc: func(obj *bucketv1.Bucket, storage *Storage) error {
 				obj.Status.Artifact = &sourcev1.Artifact{
-					Path:     fmt.Sprintf("/reconcile-storage/hostname.txt"),
+					Path:     "/reconcile-storage/hostname.txt",
 					Revision: "f",
 					Digest:   "sha256:3b9c358f36f0a31b6ad3e14f309c7cf198ac9246e8316f9ce543d5b19ac02b80",
 					URL:      "http://outdated.com/reconcile-storage/hostname.txt",
 				}
-				if err := testStorage.MkdirAll(*obj.Status.Artifact); err != nil {
+				if err := storage.MkdirAll(*obj.Status.Artifact); err != nil {
 					return err
 				}
-				if err := testStorage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader("file"), 0o640); err != nil {
+				if err := storage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader("file"), 0o640); err != nil {
 					return err
 				}
 				conditions.MarkTrue(obj, meta.ReadyCondition, "foo", "bar")
@@ -279,7 +378,10 @@ func TestBucketReconciler_reconcileStorage(t *testing.T) {
 			}()
 
 			r := &BucketReconciler{
-				Client:        fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme()).Build(),
+				Client: fakeclient.NewClientBuilder().
+					WithScheme(testEnv.GetScheme()).
+					WithStatusSubresource(&bucketv1.Bucket{}).
+					Build(),
 				EventRecorder: record.NewFakeRecorder(32),
 				Storage:       testStorage,
 				patchOptions:  getPatchOptions(bucketReadyCondition.Owned, "sc"),
@@ -591,25 +693,26 @@ func TestBucketReconciler_reconcileSource_generic(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			builder := fakeclient.NewClientBuilder().WithScheme(testEnv.Scheme())
+			clientBuilder := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.Scheme()).
+				WithStatusSubresource(&bucketv1.Bucket{})
+
 			if tt.secret != nil {
-				builder.WithObjects(tt.secret)
+				clientBuilder.WithObjects(tt.secret)
 			}
+
 			r := &BucketReconciler{
 				EventRecorder: record.NewFakeRecorder(32),
-				Client:        builder.Build(),
+				Client:        clientBuilder.Build(),
 				Storage:       testStorage,
 				patchOptions:  getPatchOptions(bucketReadyCondition.Owned, "sc"),
 			}
 			tmpDir := t.TempDir()
 
 			obj := &bucketv1.Bucket{
-				TypeMeta: metav1.TypeMeta{
-					Kind: bucketv1.BucketKind,
-				},
 				ObjectMeta: metav1.ObjectMeta{
-					Name:       "test-bucket",
-					Generation: 1,
+					GenerateName: "test-bucket-",
+					Generation:   1,
 				},
 				Spec: bucketv1.BucketSpec{
 					Timeout: &metav1.Duration{Duration: timeout},
@@ -934,13 +1037,17 @@ func TestBucketReconciler_reconcileSource_gcs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			builder := fakeclient.NewClientBuilder().WithScheme(testEnv.Scheme())
+			clientBuilder := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.Scheme()).
+				WithStatusSubresource(&bucketv1.Bucket{})
+
 			if tt.secret != nil {
-				builder.WithObjects(tt.secret)
+				clientBuilder.WithObjects(tt.secret)
 			}
+
 			r := &BucketReconciler{
 				EventRecorder: record.NewFakeRecorder(32),
-				Client:        builder.Build(),
+				Client:        clientBuilder.Build(),
 				Storage:       testStorage,
 				patchOptions:  getPatchOptions(bucketReadyCondition.Owned, "sc"),
 			}
@@ -948,12 +1055,9 @@ func TestBucketReconciler_reconcileSource_gcs(t *testing.T) {
 
 			// Test bucket object.
 			obj := &bucketv1.Bucket{
-				TypeMeta: metav1.TypeMeta{
-					Kind: bucketv1.BucketKind,
-				},
 				ObjectMeta: metav1.ObjectMeta{
-					Name:       "test-bucket",
-					Generation: 1,
+					GenerateName: "test-bucket-",
+					Generation:   1,
 				},
 				Spec: bucketv1.BucketSpec{
 					BucketName: tt.bucketName,
@@ -1107,8 +1211,8 @@ func TestBucketReconciler_reconcileArtifact(t *testing.T) {
 				// path.
 				t.Expect(os.RemoveAll(dir)).ToNot(HaveOccurred())
 				f, err := os.Create(dir)
-				defer f.Close()
 				t.Expect(err).ToNot(HaveOccurred())
+				t.Expect(f.Close()).ToNot(HaveOccurred())
 				conditions.MarkReconciling(obj, meta.ProgressingReason, "foo")
 				conditions.MarkUnknown(obj, meta.ReadyCondition, "foo", "bar")
 			},
@@ -1129,19 +1233,18 @@ func TestBucketReconciler_reconcileArtifact(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
+			clientBuilder := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.GetScheme()).
+				WithStatusSubresource(&bucketv1.Bucket{})
+
 			r := &BucketReconciler{
-				Client:        fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme()).Build(),
+				Client:        clientBuilder.Build(),
 				EventRecorder: record.NewFakeRecorder(32),
 				Storage:       testStorage,
 				patchOptions:  getPatchOptions(bucketReadyCondition.Owned, "sc"),
 			}
 
-			tmpDir := t.TempDir()
-
 			obj := &bucketv1.Bucket{
-				TypeMeta: metav1.TypeMeta{
-					Kind: bucketv1.BucketKind,
-				},
 				ObjectMeta: metav1.ObjectMeta{
 					GenerateName: "test-bucket-",
 					Generation:   1,
@@ -1152,6 +1255,7 @@ func TestBucketReconciler_reconcileArtifact(t *testing.T) {
 				},
 			}
 
+			tmpDir := t.TempDir()
 			index := index.NewDigester()
 
 			if tt.beforeFunc != nil {
@@ -1189,6 +1293,7 @@ func TestBucketReconciler_statusConditions(t *testing.T) {
 		name             string
 		beforeFunc       func(obj *bucketv1.Bucket)
 		assertConditions []metav1.Condition
+		wantErr          bool
 	}{
 		{
 			name: "positive conditions only",
@@ -1213,6 +1318,7 @@ func TestBucketReconciler_statusConditions(t *testing.T) {
 				*conditions.TrueCondition(sourcev1.StorageOperationFailedCondition, sourcev1.DirCreationFailedReason, "failed to create directory"),
 				*conditions.TrueCondition(sourcev1.ArtifactOutdatedCondition, "NewRevision", "some error"),
 			},
+			wantErr: true,
 		},
 		{
 			name: "mixed positive and negative conditions",
@@ -1225,6 +1331,7 @@ func TestBucketReconciler_statusConditions(t *testing.T) {
 				*conditions.TrueCondition(sourcev1.FetchFailedCondition, sourcev1.AuthenticationFailedReason, "failed to get secret"),
 				*conditions.TrueCondition(sourcev1.ArtifactInStorageCondition, meta.SucceededReason, "stored artifact for revision"),
 			},
+			wantErr: true,
 		},
 	}
 
@@ -1234,17 +1341,20 @@ func TestBucketReconciler_statusConditions(t *testing.T) {
 
 			obj := &bucketv1.Bucket{
 				TypeMeta: metav1.TypeMeta{
+					APIVersion: bucketv1.GroupVersion.String(),
 					Kind:       bucketv1.BucketKind,
-					APIVersion: "source.toolkit.fluxcd.io/v1beta2",
 				},
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "bucket",
+					Name:      "test-bucket",
 					Namespace: "foo",
 				},
 			}
-			clientBuilder := fake.NewClientBuilder()
-			clientBuilder.WithObjects(obj)
-			c := clientBuilder.Build()
+
+			c := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.Scheme()).
+				WithObjects(obj).
+				WithStatusSubresource(&bucketv1.Bucket{}).
+				Build()
 
 			serialPatcher := patch.NewSerialPatcher(obj, c)
 
@@ -1253,19 +1363,18 @@ func TestBucketReconciler_statusConditions(t *testing.T) {
 			}
 
 			ctx := context.TODO()
-			recResult := sreconcile.ResultSuccess
-			var retErr error
-
 			summarizeHelper := summarize.NewHelper(record.NewFakeRecorder(32), serialPatcher)
 			summarizeOpts := []summarize.Option{
 				summarize.WithConditions(bucketReadyCondition),
-				summarize.WithReconcileResult(recResult),
-				summarize.WithReconcileError(retErr),
+				summarize.WithReconcileResult(sreconcile.ResultSuccess),
 				summarize.WithIgnoreNotFound(),
-				summarize.WithResultBuilder(sreconcile.AlwaysRequeueResultBuilder{RequeueAfter: obj.GetRequeueAfter()}),
+				summarize.WithResultBuilder(sreconcile.AlwaysRequeueResultBuilder{
+					RequeueAfter: jitter.JitteredIntervalDuration(obj.GetRequeueAfter()),
+				}),
 				summarize.WithPatchFieldOwner("source-controller"),
 			}
-			_, retErr = summarizeHelper.SummarizeAndPatch(ctx, obj, summarizeOpts...)
+			_, err := summarizeHelper.SummarizeAndPatch(ctx, obj, summarizeOpts...)
+			g.Expect(err != nil).To(Equal(tt.wantErr))
 
 			key := client.ObjectKeyFromObject(obj)
 			g.Expect(c.Get(ctx, key, obj)).ToNot(HaveOccurred())

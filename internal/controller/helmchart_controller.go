@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"context"
@@ -29,10 +29,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 	"github.com/opencontainers/go-digest"
+	"github.com/sigstore/cosign/v2/pkg/cosign"
 	helmgetter "helm.sh/helm/v3/pkg/getter"
 	helmreg "helm.sh/helm/v3/pkg/registry"
 	helmrepo "helm.sh/helm/v3/pkg/repo"
@@ -52,18 +52,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/ratelimiter"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	eventv1 "github.com/fluxcd/pkg/apis/event/v1beta1"
 	"github.com/fluxcd/pkg/apis/meta"
 	"github.com/fluxcd/pkg/git"
-	"github.com/fluxcd/pkg/oci"
 	"github.com/fluxcd/pkg/runtime/conditions"
 	helper "github.com/fluxcd/pkg/runtime/controller"
+	"github.com/fluxcd/pkg/runtime/jitter"
 	"github.com/fluxcd/pkg/runtime/patch"
 	"github.com/fluxcd/pkg/runtime/predicates"
 	rreconcile "github.com/fluxcd/pkg/runtime/reconcile"
-	"github.com/fluxcd/pkg/untar"
+	"github.com/fluxcd/pkg/tar"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	helmv1 "github.com/fluxcd/source-controller/api/v1beta2"
@@ -71,7 +70,6 @@ import (
 	serror "github.com/fluxcd/source-controller/internal/error"
 	"github.com/fluxcd/source-controller/internal/helm/chart"
 	"github.com/fluxcd/source-controller/internal/helm/getter"
-	"github.com/fluxcd/source-controller/internal/helm/registry"
 	"github.com/fluxcd/source-controller/internal/helm/repository"
 	soci "github.com/fluxcd/source-controller/internal/oci"
 	sreconcile "github.com/fluxcd/source-controller/internal/reconcile"
@@ -144,13 +142,18 @@ type HelmChartReconciler struct {
 	patchOptions []patch.Option
 }
 
-func (r *HelmChartReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return r.SetupWithManagerAndOptions(mgr, HelmChartReconcilerOptions{})
+// RegistryClientGeneratorFunc is a function that returns a registry client
+// and an optional file name.
+// The file is used to store the registry client credentials.
+// The caller is responsible for deleting the file.
+type RegistryClientGeneratorFunc func(tlsConfig *tls.Config, isLogin, insecure bool) (*helmreg.Client, string, error)
+
+func (r *HelmChartReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+	return r.SetupWithManagerAndOptions(ctx, mgr, HelmChartReconcilerOptions{})
 }
 
 type HelmChartReconcilerOptions struct {
-	MaxConcurrentReconciles int
-	RateLimiter             ratelimiter.RateLimiter
+	RateLimiter ratelimiter.RateLimiter
 }
 
 // helmChartReconcileFunc is the function type for all the v1beta2.HelmChart
@@ -158,42 +161,39 @@ type HelmChartReconcilerOptions struct {
 // executed serially to perform the complete reconcile of the object.
 type helmChartReconcileFunc func(ctx context.Context, sp *patch.SerialPatcher, obj *helmv1.HelmChart, build *chart.Build) (sreconcile.Result, error)
 
-func (r *HelmChartReconciler) SetupWithManagerAndOptions(mgr ctrl.Manager, opts HelmChartReconcilerOptions) error {
+func (r *HelmChartReconciler) SetupWithManagerAndOptions(ctx context.Context, mgr ctrl.Manager, opts HelmChartReconcilerOptions) error {
 	r.patchOptions = getPatchOptions(helmChartReadyCondition.Owned, r.ControllerName)
 
-	if err := mgr.GetCache().IndexField(context.TODO(), &helmv1.HelmRepository{}, helmv1.HelmRepositoryURLIndexKey,
+	if err := mgr.GetCache().IndexField(ctx, &helmv1.HelmRepository{}, helmv1.HelmRepositoryURLIndexKey,
 		r.indexHelmRepositoryByURL); err != nil {
 		return fmt.Errorf("failed setting index fields: %w", err)
 	}
-	if err := mgr.GetCache().IndexField(context.TODO(), &helmv1.HelmChart{}, sourcev1.SourceIndexKey,
+	if err := mgr.GetCache().IndexField(ctx, &helmv1.HelmChart{}, sourcev1.SourceIndexKey,
 		r.indexHelmChartBySource); err != nil {
 		return fmt.Errorf("failed setting index fields: %w", err)
 	}
 
-	recoverPanic := true
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&helmv1.HelmChart{}, builder.WithPredicates(
 			predicate.Or(predicate.GenerationChangedPredicate{}, predicates.ReconcileRequestedPredicate{}),
 		)).
 		Watches(
-			&source.Kind{Type: &helmv1.HelmRepository{}},
+			&helmv1.HelmRepository{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForHelmRepositoryChange),
 			builder.WithPredicates(SourceRevisionChangePredicate{}),
 		).
 		Watches(
-			&source.Kind{Type: &sourcev1.GitRepository{}},
+			&sourcev1.GitRepository{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForGitRepositoryChange),
 			builder.WithPredicates(SourceRevisionChangePredicate{}),
 		).
 		Watches(
-			&source.Kind{Type: &helmv1.Bucket{}},
+			&helmv1.Bucket{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForBucketChange),
 			builder.WithPredicates(SourceRevisionChangePredicate{}),
 		).
 		WithOptions(controller.Options{
-			MaxConcurrentReconciles: opts.MaxConcurrentReconciles,
-			RateLimiter:             opts.RateLimiter,
-			RecoverPanic:            &recoverPanic,
+			RateLimiter: opts.RateLimiter,
 		}).
 		Complete(r)
 }
@@ -207,9 +207,6 @@ func (r *HelmChartReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-
-	// Record suspended status metric
-	r.RecordSuspend(ctx, obj, obj.Spec.Suspend)
 
 	// Initialize the patch helper with the current version of the object.
 	serialPatcher := patch.NewSerialPatcher(obj, r.Client)
@@ -228,30 +225,35 @@ func (r *HelmChartReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			summarize.WithReconcileError(retErr),
 			summarize.WithIgnoreNotFound(),
 			summarize.WithProcessors(
-				summarize.RecordContextualError,
+				summarize.ErrorActionHandler,
 				summarize.RecordReconcileReq,
 			),
-			summarize.WithResultBuilder(sreconcile.AlwaysRequeueResultBuilder{RequeueAfter: obj.GetRequeueAfter()}),
+			summarize.WithResultBuilder(sreconcile.AlwaysRequeueResultBuilder{
+				RequeueAfter: jitter.JitteredIntervalDuration(obj.GetRequeueAfter()),
+			}),
 			summarize.WithPatchFieldOwner(r.ControllerName),
 		}
 		result, retErr = summarizeHelper.SummarizeAndPatch(ctx, obj, summarizeOpts...)
 
-		// Always record readiness and duration metrics
+		// Always record suspend, readiness and duration metrics.
+		r.Metrics.RecordSuspend(ctx, obj, obj.Spec.Suspend)
 		r.Metrics.RecordReadiness(ctx, obj)
 		r.Metrics.RecordDuration(ctx, obj, start)
 	}()
 
-	// Add finalizer first if not exist to avoid the race condition
-	// between init and delete
-	if !controllerutil.ContainsFinalizer(obj, sourcev1.SourceFinalizer) {
-		controllerutil.AddFinalizer(obj, sourcev1.SourceFinalizer)
-		recResult = sreconcile.ResultRequeue
+	// Examine if the object is under deletion.
+	if !obj.ObjectMeta.DeletionTimestamp.IsZero() {
+		recResult, retErr = r.reconcileDelete(ctx, obj)
 		return
 	}
 
-	// Examine if the object is under deletion
-	if !obj.ObjectMeta.DeletionTimestamp.IsZero() {
-		recResult, retErr = r.reconcileDelete(ctx, obj)
+	// Add finalizer first if not exist to avoid the race condition
+	// between init and delete.
+	// Note: Finalizers in general can only be added when the deletionTimestamp
+	// is not set.
+	if !controllerutil.ContainsFinalizer(obj, sourcev1.SourceFinalizer) {
+		controllerutil.AddFinalizer(obj, sourcev1.SourceFinalizer)
+		recResult = sreconcile.ResultRequeue
 		return
 	}
 
@@ -291,11 +293,11 @@ func (r *HelmChartReconciler) reconcile(ctx context.Context, sp *patch.SerialPat
 		rreconcile.ProgressiveStatus(false, obj, meta.ProgressingReason,
 			"processing object: new generation %d -> %d", obj.Status.ObservedGeneration, obj.Generation)
 		if err := sp.Patch(ctx, obj, r.patchOptions...); err != nil {
-			return sreconcile.ResultEmpty, err
+			return sreconcile.ResultEmpty, serror.NewGeneric(err, sourcev1.PatchOperationFailedReason)
 		}
 	case reconcileAtVal != obj.Status.GetLastHandledReconcileRequest():
 		if err := sp.Patch(ctx, obj, r.patchOptions...); err != nil {
-			return sreconcile.ResultEmpty, err
+			return sreconcile.ResultEmpty, serror.NewGeneric(err, sourcev1.PatchOperationFailedReason)
 		}
 	}
 
@@ -364,18 +366,36 @@ func (r *HelmChartReconciler) notify(ctx context.Context, oldObj, newObj *helmv1
 // condition is added.
 // The hostname of any URL in the Status of the object are updated, to ensure
 // they match the Storage server hostname of current runtime.
-func (r *HelmChartReconciler) reconcileStorage(ctx context.Context, sp *patch.SerialPatcher, obj *helmv1.HelmChart, build *chart.Build) (sreconcile.Result, error) {
+func (r *HelmChartReconciler) reconcileStorage(ctx context.Context, sp *patch.SerialPatcher, obj *helmv1.HelmChart, _ *chart.Build) (sreconcile.Result, error) {
 	// Garbage collect previous advertised artifact(s) from storage
 	_ = r.garbageCollect(ctx, obj)
 
-	// Determine if the advertised artifact is still in storage
 	var artifactMissing bool
-	if artifact := obj.GetArtifact(); artifact != nil && !r.Storage.ArtifactExist(*artifact) {
-		obj.Status.Artifact = nil
-		obj.Status.URL = ""
-		artifactMissing = true
-		// Remove the condition as the artifact doesn't exist.
-		conditions.Delete(obj, sourcev1.ArtifactInStorageCondition)
+	if artifact := obj.GetArtifact(); artifact != nil {
+		// Determine if the advertised artifact is still in storage
+		if !r.Storage.ArtifactExist(*artifact) {
+			artifactMissing = true
+		}
+
+		// If the artifact is in storage, verify if the advertised digest still
+		// matches the actual artifact
+		if !artifactMissing {
+			if err := r.Storage.VerifyArtifact(*artifact); err != nil {
+				r.Eventf(obj, corev1.EventTypeWarning, "ArtifactVerificationFailed", "failed to verify integrity of artifact: %s", err.Error())
+
+				if err = r.Storage.Remove(*artifact); err != nil {
+					return sreconcile.ResultEmpty, fmt.Errorf("failed to remove artifact after digest mismatch: %w", err)
+				}
+
+				artifactMissing = true
+			}
+		}
+
+		// If the artifact is missing, remove it from the object
+		if artifactMissing {
+			obj.Status.Artifact = nil
+			obj.Status.URL = ""
+		}
 	}
 
 	// Record that we do not have an artifact
@@ -387,7 +407,7 @@ func (r *HelmChartReconciler) reconcileStorage(ctx context.Context, sp *patch.Se
 		rreconcile.ProgressiveStatus(true, obj, meta.ProgressingReason, msg)
 		conditions.Delete(obj, sourcev1.ArtifactInStorageCondition)
 		if err := sp.Patch(ctx, obj, r.patchOptions...); err != nil {
-			return sreconcile.ResultEmpty, err
+			return sreconcile.ResultEmpty, serror.NewGeneric(err, sourcev1.PatchOperationFailedReason)
 		}
 		return sreconcile.ResultSuccess, nil
 	}
@@ -410,19 +430,19 @@ func (r *HelmChartReconciler) reconcileSource(ctx context.Context, sp *patch.Ser
 	// Retrieve the source
 	s, err := r.getSource(ctx, obj)
 	if err != nil {
-		e := &serror.Event{
-			Err:    fmt.Errorf("failed to get source: %w", err),
-			Reason: "SourceUnavailable",
-		}
+		e := serror.NewGeneric(
+			fmt.Errorf("failed to get source: %w", err),
+			"SourceUnavailable",
+		)
 		conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 
 		// Return Kubernetes client errors, but ignore others which can only be
 		// solved by a change in generation
 		if apierrs.ReasonForError(err) == metav1.StatusReasonUnknown {
-			return sreconcile.ResultEmpty, &serror.Stalling{
-				Err:    fmt.Errorf("failed to get source: %w", err),
-				Reason: "UnsupportedSourceKind",
-			}
+			return sreconcile.ResultEmpty, serror.NewStalling(
+				fmt.Errorf("failed to get source: %w", err),
+				"UnsupportedSourceKind",
+			)
 		}
 		return sreconcile.ResultEmpty, e
 	}
@@ -461,15 +481,15 @@ func (r *HelmChartReconciler) reconcileSource(ctx context.Context, sp *patch.Ser
 		// Handle any build error
 		if retErr != nil {
 			if buildErr := new(chart.BuildError); errors.As(retErr, &buildErr) {
-				retErr = &serror.Event{
-					Err:    buildErr,
-					Reason: buildErr.Reason.Reason,
-				}
+				retErr = serror.NewGeneric(
+					buildErr,
+					buildErr.Reason.Reason,
+				)
 				if chart.IsPersistentBuildErrorReason(buildErr.Reason) {
-					retErr = &serror.Stalling{
-						Err:    buildErr,
-						Reason: buildErr.Reason.Reason,
-					}
+					retErr = serror.NewStalling(
+						buildErr,
+						buildErr.Reason.Reason,
+					)
 				}
 			}
 		}
@@ -495,85 +515,34 @@ func (r *HelmChartReconciler) reconcileSource(ctx context.Context, sp *patch.Ser
 // object, and returns early.
 func (r *HelmChartReconciler) buildFromHelmRepository(ctx context.Context, obj *helmv1.HelmChart,
 	repo *helmv1.HelmRepository, b *chart.Build) (sreconcile.Result, error) {
-	var (
-		tlsConfig     *tls.Config
-		authenticator authn.Authenticator
-		keychain      authn.Keychain
-	)
 	// Used to login with the repository declared provider
-	ctxTimeout, cancel := context.WithTimeout(ctx, repo.Spec.Timeout.Duration)
+	ctxTimeout, cancel := context.WithTimeout(ctx, repo.GetTimeout())
 	defer cancel()
 
 	normalizedURL, err := repository.NormalizeURL(repo.Spec.URL)
 	if err != nil {
 		return chartRepoConfigErrorReturn(err, obj)
 	}
-	// Construct the Getter options from the HelmRepository data
-	clientOpts := []helmgetter.Option{
-		helmgetter.WithURL(normalizedURL),
-		helmgetter.WithTimeout(repo.Spec.Timeout.Duration),
-		helmgetter.WithPassCredentialsAll(repo.Spec.PassCredentials),
-	}
-	if secret, err := r.getHelmRepositorySecret(ctx, repo); secret != nil || err != nil {
-		if err != nil {
-			e := &serror.Event{
-				Err:    fmt.Errorf("failed to get secret '%s': %w", repo.Spec.SecretRef.Name, err),
-				Reason: sourcev1.AuthenticationFailedReason,
-			}
-			conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
-			// Return error as the world as observed may change
-			return sreconcile.ResultEmpty, e
-		}
 
-		// Build client options from secret
-		opts, tlsCfg, err := r.clientOptionsFromSecret(secret, normalizedURL)
-		if err != nil {
-			e := &serror.Event{
-				Err:    err,
-				Reason: sourcev1.AuthenticationFailedReason,
-			}
-			conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
-			// Requeue as content of secret might change
-			return sreconcile.ResultEmpty, e
-		}
-		clientOpts = append(clientOpts, opts...)
-		tlsConfig = tlsCfg
-
-		// Build registryClient options from secret
-		keychain, err = registry.LoginOptionFromSecret(normalizedURL, *secret)
-		if err != nil {
-			e := &serror.Event{
-				Err:    fmt.Errorf("failed to configure Helm client with secret data: %w", err),
-				Reason: sourcev1.AuthenticationFailedReason,
-			}
-			conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
-			// Requeue as content of secret might change
-			return sreconcile.ResultEmpty, e
-		}
-	} else if repo.Spec.Provider != helmv1.GenericOCIProvider && repo.Spec.Type == helmv1.HelmRepositoryTypeOCI {
-		auth, authErr := oidcAuth(ctxTimeout, repo.Spec.URL, repo.Spec.Provider)
-		if authErr != nil && !errors.Is(authErr, oci.ErrUnconfiguredProvider) {
-			e := &serror.Event{
-				Err:    fmt.Errorf("failed to get credential from %s: %w", repo.Spec.Provider, authErr),
-				Reason: sourcev1.AuthenticationFailedReason,
-			}
-			conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
-			return sreconcile.ResultEmpty, e
-		}
-		if auth != nil {
-			authenticator = auth
-		}
-	}
-
-	loginOpt, err := makeLoginOption(authenticator, keychain, normalizedURL)
-	if err != nil {
-		e := &serror.Event{
-			Err:    err,
-			Reason: sourcev1.AuthenticationFailedReason,
-		}
+	clientOpts, certsTmpDir, err := getter.GetClientOpts(ctxTimeout, r.Client, repo, normalizedURL)
+	if err != nil && !errors.Is(err, getter.ErrDeprecatedTLSConfig) {
+		e := serror.NewGeneric(
+			err,
+			sourcev1.AuthenticationFailedReason,
+		)
 		conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
+	if certsTmpDir != "" {
+		defer func() {
+			if err := os.RemoveAll(certsTmpDir); err != nil {
+				r.eventLogf(ctx, obj, corev1.EventTypeWarning, meta.FailedReason,
+					"failed to delete temporary certificates directory: %s", err)
+			}
+		}()
+	}
+
+	getterOpts := clientOpts.GetterOpts
 
 	// Initialize the chart repository
 	var chartRepo repository.Downloader
@@ -588,12 +557,12 @@ func (r *HelmChartReconciler) buildFromHelmRepository(ctx context.Context, obj *
 		// this is needed because otherwise the credentials are stored in ~/.docker/config.json.
 		// TODO@souleb: remove this once the registry move to Oras v2
 		// or rework to enable reusing credentials to avoid the unneccessary handshake operations
-		registryClient, credentialsFile, err := r.RegistryClientGenerator(loginOpt != nil)
+		registryClient, credentialsFile, err := r.RegistryClientGenerator(clientOpts.TlsConfig, clientOpts.MustLoginToRegistry(), repo.Spec.Insecure)
 		if err != nil {
-			e := &serror.Event{
-				Err:    fmt.Errorf("failed to construct Helm client: %w", err),
-				Reason: meta.FailedReason,
-			}
+			e := serror.NewGeneric(
+				fmt.Errorf("failed to construct Helm client: %w", err),
+				meta.FailedReason,
+			)
 			conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 			return sreconcile.ResultEmpty, e
 		}
@@ -610,47 +579,53 @@ func (r *HelmChartReconciler) buildFromHelmRepository(ctx context.Context, obj *
 		var verifiers []soci.Verifier
 		if obj.Spec.Verify != nil {
 			provider := obj.Spec.Verify.Provider
-			verifiers, err = r.makeVerifiers(ctx, obj, authenticator, keychain)
+			verifiers, err = r.makeVerifiers(ctx, obj, *clientOpts)
 			if err != nil {
 				if obj.Spec.Verify.SecretRef == nil {
 					provider = fmt.Sprintf("%s keyless", provider)
 				}
-				e := &serror.Event{
-					Err:    fmt.Errorf("failed to verify the signature using provider '%s': %w", provider, err),
-					Reason: sourcev1.VerificationError,
-				}
+				e := serror.NewGeneric(
+					fmt.Errorf("failed to verify the signature using provider '%s': %w", provider, err),
+					sourcev1.VerificationError,
+				)
 				conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, e.Reason, e.Err.Error())
 				return sreconcile.ResultEmpty, e
 			}
 		}
 
 		// Tell the chart repository to use the OCI client with the configured getter
-		clientOpts = append(clientOpts, helmgetter.WithRegistryClient(registryClient))
-		ociChartRepo, err := repository.NewOCIChartRepository(normalizedURL,
+		getterOpts = append(getterOpts, helmgetter.WithRegistryClient(registryClient))
+		chartRepoOpts := []repository.OCIChartRepositoryOption{
 			repository.WithOCIGetter(r.Getters),
-			repository.WithOCIGetterOptions(clientOpts),
+			repository.WithOCIGetterOptions(getterOpts),
 			repository.WithOCIRegistryClient(registryClient),
-			repository.WithVerifiers(verifiers))
+			repository.WithVerifiers(verifiers),
+		}
+		if repo.Spec.Insecure {
+			chartRepoOpts = append(chartRepoOpts, repository.WithInsecureHTTP())
+		}
+
+		ociChartRepo, err := repository.NewOCIChartRepository(normalizedURL, chartRepoOpts...)
 		if err != nil {
 			return chartRepoConfigErrorReturn(err, obj)
 		}
-		chartRepo = ociChartRepo
 
 		// If login options are configured, use them to login to the registry
 		// The OCIGetter will later retrieve the stored credentials to pull the chart
-		if loginOpt != nil {
-			err = ociChartRepo.Login(loginOpt)
+		if clientOpts.MustLoginToRegistry() {
+			err = ociChartRepo.Login(clientOpts.RegLoginOpts...)
 			if err != nil {
-				e := &serror.Event{
-					Err:    fmt.Errorf("failed to login to OCI registry: %w", err),
-					Reason: sourcev1.AuthenticationFailedReason,
-				}
+				e := serror.NewGeneric(
+					fmt.Errorf("failed to login to OCI registry: %w", err),
+					sourcev1.AuthenticationFailedReason,
+				)
 				conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 				return sreconcile.ResultEmpty, e
 			}
 		}
+		chartRepo = ociChartRepo
 	default:
-		httpChartRepo, err := repository.NewChartRepository(normalizedURL, r.Storage.LocalPath(*repo.GetArtifact()), r.Getters, tlsConfig, clientOpts...)
+		httpChartRepo, err := repository.NewChartRepository(normalizedURL, r.Storage.LocalPath(*repo.GetArtifact()), r.Getters, clientOpts.TlsConfig, getterOpts...)
 		if err != nil {
 			return chartRepoConfigErrorReturn(err, obj)
 		}
@@ -724,10 +699,10 @@ func (r *HelmChartReconciler) buildFromTarballArtifact(ctx context.Context, obj 
 	// Create temporary working directory
 	tmpDir, err := util.TempDirForObj("", obj)
 	if err != nil {
-		e := &serror.Event{
-			Err:    fmt.Errorf("failed to create temporary working directory: %w", err),
-			Reason: sourcev1.DirCreationFailedReason,
-		}
+		e := serror.NewGeneric(
+			fmt.Errorf("failed to create temporary working directory: %w", err),
+			sourcev1.DirCreationFailedReason,
+		)
 		conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
@@ -736,10 +711,10 @@ func (r *HelmChartReconciler) buildFromTarballArtifact(ctx context.Context, obj 
 	// Create directory to untar source into
 	sourceDir := filepath.Join(tmpDir, "source")
 	if err := os.Mkdir(sourceDir, 0o700); err != nil {
-		e := &serror.Event{
-			Err:    fmt.Errorf("failed to create directory to untar source into: %w", err),
-			Reason: sourcev1.DirCreationFailedReason,
-		}
+		e := serror.NewGeneric(
+			fmt.Errorf("failed to create directory to untar source into: %w", err),
+			sourcev1.DirCreationFailedReason,
+		)
 		conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
@@ -747,25 +722,25 @@ func (r *HelmChartReconciler) buildFromTarballArtifact(ctx context.Context, obj 
 	// Open the tarball artifact file and untar files into working directory
 	f, err := os.Open(r.Storage.LocalPath(source))
 	if err != nil {
-		e := &serror.Event{
-			Err:    fmt.Errorf("failed to open source artifact: %w", err),
-			Reason: sourcev1.ReadOperationFailedReason,
-		}
+		e := serror.NewGeneric(
+			fmt.Errorf("failed to open source artifact: %w", err),
+			sourcev1.ReadOperationFailedReason,
+		)
 		conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
-	if _, err = untar.Untar(f, sourceDir); err != nil {
+	if err = tar.Untar(f, sourceDir, tar.WithMaxUntarSize(-1)); err != nil {
 		_ = f.Close()
-		return sreconcile.ResultEmpty, &serror.Event{
-			Err:    fmt.Errorf("artifact untar error: %w", err),
-			Reason: meta.FailedReason,
-		}
+		return sreconcile.ResultEmpty, serror.NewGeneric(
+			fmt.Errorf("artifact untar error: %w", err),
+			meta.FailedReason,
+		)
 	}
 	if err = f.Close(); err != nil {
-		return sreconcile.ResultEmpty, &serror.Event{
-			Err:    fmt.Errorf("artifact close error: %w", err),
-			Reason: meta.FailedReason,
-		}
+		return sreconcile.ResultEmpty, serror.NewGeneric(
+			fmt.Errorf("artifact close error: %w", err),
+			meta.FailedReason,
+		)
 	}
 
 	// Setup dependency manager
@@ -875,19 +850,19 @@ func (r *HelmChartReconciler) reconcileArtifact(ctx context.Context, _ *patch.Se
 
 	// Ensure artifact directory exists and acquire lock
 	if err := r.Storage.MkdirAll(artifact); err != nil {
-		e := &serror.Event{
-			Err:    fmt.Errorf("failed to create artifact directory: %w", err),
-			Reason: sourcev1.DirCreationFailedReason,
-		}
+		e := serror.NewGeneric(
+			fmt.Errorf("failed to create artifact directory: %w", err),
+			sourcev1.DirCreationFailedReason,
+		)
 		conditions.MarkTrue(obj, sourcev1.StorageOperationFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
 	unlock, err := r.Storage.Lock(artifact)
 	if err != nil {
-		e := &serror.Event{
-			Err:    fmt.Errorf("failed to acquire lock for artifact: %w", err),
-			Reason: sourcev1.AcquireLockFailedReason,
-		}
+		e := serror.NewGeneric(
+			fmt.Errorf("failed to acquire lock for artifact: %w", err),
+			sourcev1.AcquireLockFailedReason,
+		)
 		conditions.MarkTrue(obj, sourcev1.StorageOperationFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
@@ -895,10 +870,10 @@ func (r *HelmChartReconciler) reconcileArtifact(ctx context.Context, _ *patch.Se
 
 	// Copy the packaged chart to the artifact path
 	if err = r.Storage.CopyFromPath(&artifact, b.Path); err != nil {
-		e := &serror.Event{
-			Err:    fmt.Errorf("unable to copy Helm chart to storage: %w", err),
-			Reason: sourcev1.ArchiveOperationFailedReason,
-		}
+		e := serror.NewGeneric(
+			fmt.Errorf("unable to copy Helm chart to storage: %w", err),
+			sourcev1.ArchiveOperationFailedReason,
+		)
 		conditions.MarkTrue(obj, sourcev1.StorageOperationFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
@@ -979,10 +954,10 @@ func (r *HelmChartReconciler) reconcileDelete(ctx context.Context, obj *helmv1.H
 func (r *HelmChartReconciler) garbageCollect(ctx context.Context, obj *helmv1.HelmChart) error {
 	if !obj.DeletionTimestamp.IsZero() {
 		if deleted, err := r.Storage.RemoveAll(r.Storage.NewArtifactFor(obj.Kind, obj.GetObjectMeta(), "", "*")); err != nil {
-			return &serror.Event{
-				Err:    fmt.Errorf("garbage collection for deleted resource failed: %w", err),
-				Reason: "GarbageCollectionFailed",
-			}
+			return serror.NewGeneric(
+				fmt.Errorf("garbage collection for deleted resource failed: %w", err),
+				"GarbageCollectionFailed",
+			)
 		} else if deleted != "" {
 			r.eventLogf(ctx, obj, eventv1.EventTypeTrace, "GarbageCollectionSucceeded",
 				"garbage collected artifacts for deleted resource")
@@ -993,10 +968,10 @@ func (r *HelmChartReconciler) garbageCollect(ctx context.Context, obj *helmv1.He
 	if obj.GetArtifact() != nil {
 		delFiles, err := r.Storage.GarbageCollect(ctx, *obj.GetArtifact(), time.Second*5)
 		if err != nil {
-			return &serror.Event{
-				Err:    fmt.Errorf("garbage collection of artifacts failed: %w", err),
-				Reason: "GarbageCollectionFailed",
-			}
+			return serror.NewGeneric(
+				fmt.Errorf("garbage collection of artifacts failed: %w", err),
+				"GarbageCollectionFailed",
+			)
 		}
 		if len(delFiles) > 0 {
 			r.eventLogf(ctx, obj, eventv1.EventTypeTrace, "GarbageCollectionSucceeded",
@@ -1013,12 +988,6 @@ func (r *HelmChartReconciler) garbageCollect(ctx context.Context, obj *helmv1.He
 // The callback returns an object with a state, so the caller has to do the necessary cleanup.
 func (r *HelmChartReconciler) namespacedChartRepositoryCallback(ctx context.Context, name, namespace string) chart.GetChartDownloaderCallback {
 	return func(url string) (repository.Downloader, error) {
-		var (
-			tlsConfig     *tls.Config
-			authenticator authn.Authenticator
-			keychain      authn.Keychain
-		)
-
 		normalizedURL, err := repository.NormalizeURL(url)
 		if err != nil {
 			return nil, err
@@ -1038,64 +1007,32 @@ func (r *HelmChartReconciler) namespacedChartRepositoryCallback(ctx context.Cont
 		}
 
 		// Used to login with the repository declared provider
-		ctxTimeout, cancel := context.WithTimeout(ctx, obj.Spec.Timeout.Duration)
+		ctxTimeout, cancel := context.WithTimeout(ctx, obj.GetTimeout())
 		defer cancel()
 
-		clientOpts := []helmgetter.Option{
-			helmgetter.WithURL(normalizedURL),
-			helmgetter.WithTimeout(obj.Spec.Timeout.Duration),
-			helmgetter.WithPassCredentialsAll(obj.Spec.PassCredentials),
-		}
-		if secret, err := r.getHelmRepositorySecret(ctx, obj); secret != nil || err != nil {
-			if err != nil {
-				return nil, err
-			}
-
-			// Build client options from secret
-			opts, tlsCfg, err := r.clientOptionsFromSecret(secret, normalizedURL)
-			if err != nil {
-				return nil, err
-			}
-			clientOpts = append(clientOpts, opts...)
-			tlsConfig = tlsCfg
-
-			// Build registryClient options from secret
-			keychain, err = registry.LoginOptionFromSecret(normalizedURL, *secret)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create login options for HelmRepository '%s': %w", obj.Name, err)
-			}
-
-		} else if obj.Spec.Provider != helmv1.GenericOCIProvider && obj.Spec.Type == helmv1.HelmRepositoryTypeOCI {
-			auth, authErr := oidcAuth(ctxTimeout, obj.Spec.URL, obj.Spec.Provider)
-			if authErr != nil && !errors.Is(authErr, oci.ErrUnconfiguredProvider) {
-				return nil, fmt.Errorf("failed to get credential from %s: %w", obj.Spec.Provider, authErr)
-			}
-			if auth != nil {
-				authenticator = auth
-			}
-		}
-
-		loginOpt, err := makeLoginOption(authenticator, keychain, normalizedURL)
-		if err != nil {
+		clientOpts, certsTmpDir, err := getter.GetClientOpts(ctxTimeout, r.Client, obj, normalizedURL)
+		if err != nil && !errors.Is(err, getter.ErrDeprecatedTLSConfig) {
 			return nil, err
 		}
+		getterOpts := clientOpts.GetterOpts
 
 		var chartRepo repository.Downloader
 		if helmreg.IsOCI(normalizedURL) {
-			registryClient, credentialsFile, err := r.RegistryClientGenerator(loginOpt != nil)
+			registryClient, credentialsFile, err := r.RegistryClientGenerator(clientOpts.TlsConfig, clientOpts.MustLoginToRegistry(), obj.Spec.Insecure)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create registry client for HelmRepository '%s': %w", obj.Name, err)
+				return nil, fmt.Errorf("failed to create registry client: %w", err)
 			}
 
 			var errs []error
 			// Tell the chart repository to use the OCI client with the configured getter
-			clientOpts = append(clientOpts, helmgetter.WithRegistryClient(registryClient))
+			getterOpts = append(getterOpts, helmgetter.WithRegistryClient(registryClient))
 			ociChartRepo, err := repository.NewOCIChartRepository(normalizedURL, repository.WithOCIGetter(r.Getters),
-				repository.WithOCIGetterOptions(clientOpts),
+				repository.WithOCIGetterOptions(getterOpts),
 				repository.WithOCIRegistryClient(registryClient),
+				repository.WithCertificatesStore(certsTmpDir),
 				repository.WithCredentialsFile(credentialsFile))
 			if err != nil {
-				errs = append(errs, fmt.Errorf("failed to create OCI chart repository for HelmRepository '%s': %w", obj.Name, err))
+				errs = append(errs, fmt.Errorf("failed to create OCI chart repository: %w", err))
 				// clean up the credentialsFile
 				if credentialsFile != "" {
 					if err := os.Remove(credentialsFile); err != nil {
@@ -1107,10 +1044,10 @@ func (r *HelmChartReconciler) namespacedChartRepositoryCallback(ctx context.Cont
 
 			// If login options are configured, use them to login to the registry
 			// The OCIGetter will later retrieve the stored credentials to pull the chart
-			if loginOpt != nil {
-				err = ociChartRepo.Login(loginOpt)
+			if clientOpts.MustLoginToRegistry() {
+				err = ociChartRepo.Login(clientOpts.RegLoginOpts...)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to login to OCI chart repository for HelmRepository '%s': %w", obj.Name, err))
+					errs = append(errs, fmt.Errorf("failed to login to OCI chart repository: %w", err))
 					// clean up the credentialsFile
 					errs = append(errs, ociChartRepo.Clear())
 					return nil, kerrors.NewAggregate(errs)
@@ -1119,7 +1056,7 @@ func (r *HelmChartReconciler) namespacedChartRepositoryCallback(ctx context.Cont
 
 			chartRepo = ociChartRepo
 		} else {
-			httpChartRepo, err := repository.NewChartRepository(normalizedURL, "", r.Getters, tlsConfig, clientOpts...)
+			httpChartRepo, err := repository.NewChartRepository(normalizedURL, "", r.Getters, clientOpts.TlsConfig, getterOpts...)
 			if err != nil {
 				return nil, err
 			}
@@ -1167,36 +1104,6 @@ func (r *HelmChartReconciler) resolveDependencyRepository(ctx context.Context, u
 	return nil, fmt.Errorf("no HelmRepository found for '%s' in '%s' namespace", url, namespace)
 }
 
-func (r *HelmChartReconciler) clientOptionsFromSecret(secret *corev1.Secret, normalizedURL string) ([]helmgetter.Option, *tls.Config, error) {
-	opts, err := getter.ClientOptionsFromSecret(*secret)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to configure Helm client with secret data: %w", err)
-	}
-
-	tlsConfig, err := getter.TLSClientConfigFromSecret(*secret, normalizedURL)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create TLS client config with secret data: %w", err)
-	}
-
-	return opts, tlsConfig, nil
-}
-
-func (r *HelmChartReconciler) getHelmRepositorySecret(ctx context.Context, repository *helmv1.HelmRepository) (*corev1.Secret, error) {
-	if repository.Spec.SecretRef == nil {
-		return nil, nil
-	}
-	name := types.NamespacedName{
-		Namespace: repository.GetNamespace(),
-		Name:      repository.Spec.SecretRef.Name,
-	}
-	var secret corev1.Secret
-	err := r.Client.Get(ctx, name, &secret)
-	if err != nil {
-		return nil, err
-	}
-	return &secret, nil
-}
-
 func (r *HelmChartReconciler) indexHelmRepositoryByURL(o client.Object) []string {
 	repo, ok := o.(*helmv1.HelmRepository)
 	if !ok {
@@ -1217,37 +1124,41 @@ func (r *HelmChartReconciler) indexHelmChartBySource(o client.Object) []string {
 	return []string{fmt.Sprintf("%s/%s", hc.Spec.SourceRef.Kind, hc.Spec.SourceRef.Name)}
 }
 
-func (r *HelmChartReconciler) requestsForHelmRepositoryChange(o client.Object) []reconcile.Request {
+func (r *HelmChartReconciler) requestsForHelmRepositoryChange(ctx context.Context, o client.Object) []reconcile.Request {
 	repo, ok := o.(*helmv1.HelmRepository)
 	if !ok {
-		panic(fmt.Sprintf("Expected a HelmRepository, got %T", o))
+		ctrl.LoggerFrom(ctx).Error(fmt.Errorf("expected a HelmRepository, got %T", o), "failed to get requests for HelmRepository change")
+		return nil
 	}
+
 	// If we do not have an artifact, we have no requests to make
 	if repo.GetArtifact() == nil {
 		return nil
 	}
 
-	ctx := context.Background()
 	var list helmv1.HelmChartList
 	if err := r.List(ctx, &list, client.MatchingFields{
 		sourcev1.SourceIndexKey: fmt.Sprintf("%s/%s", helmv1.HelmRepositoryKind, repo.Name),
 	}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "failed to list HelmCharts for HelmRepository change")
 		return nil
 	}
 
 	var reqs []reconcile.Request
-	for _, i := range list.Items {
-		if i.Status.ObservedSourceArtifactRevision != repo.GetArtifact().Revision {
-			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&i)})
+	for i, v := range list.Items {
+		if v.Status.ObservedSourceArtifactRevision != repo.GetArtifact().Revision {
+			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
 		}
 	}
 	return reqs
 }
 
-func (r *HelmChartReconciler) requestsForGitRepositoryChange(o client.Object) []reconcile.Request {
+func (r *HelmChartReconciler) requestsForGitRepositoryChange(ctx context.Context, o client.Object) []reconcile.Request {
 	repo, ok := o.(*sourcev1.GitRepository)
 	if !ok {
-		panic(fmt.Sprintf("Expected a GitRepository, got %T", o))
+		ctrl.LoggerFrom(ctx).Error(fmt.Errorf("expected a GitRepository, got %T", o),
+			"failed to get reconcile requests for GitRepository change")
+		return nil
 	}
 
 	// If we do not have an artifact, we have no requests to make
@@ -1256,25 +1167,28 @@ func (r *HelmChartReconciler) requestsForGitRepositoryChange(o client.Object) []
 	}
 
 	var list helmv1.HelmChartList
-	if err := r.List(context.TODO(), &list, client.MatchingFields{
+	if err := r.List(ctx, &list, client.MatchingFields{
 		sourcev1.SourceIndexKey: fmt.Sprintf("%s/%s", sourcev1.GitRepositoryKind, repo.Name),
 	}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "failed to list HelmCharts for GitRepository change")
 		return nil
 	}
 
 	var reqs []reconcile.Request
-	for _, i := range list.Items {
-		if !repo.GetArtifact().HasRevision(i.Status.ObservedSourceArtifactRevision) {
-			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&i)})
+	for i, v := range list.Items {
+		if !repo.GetArtifact().HasRevision(v.Status.ObservedSourceArtifactRevision) {
+			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
 		}
 	}
 	return reqs
 }
 
-func (r *HelmChartReconciler) requestsForBucketChange(o client.Object) []reconcile.Request {
+func (r *HelmChartReconciler) requestsForBucketChange(ctx context.Context, o client.Object) []reconcile.Request {
 	bucket, ok := o.(*helmv1.Bucket)
 	if !ok {
-		panic(fmt.Sprintf("Expected a Bucket, got %T", o))
+		ctrl.LoggerFrom(ctx).Error(fmt.Errorf("expected a Bucket, got %T", o),
+			"failed to get reconcile requests for Bucket change")
+		return nil
 	}
 
 	// If we do not have an artifact, we have no requests to make
@@ -1283,16 +1197,17 @@ func (r *HelmChartReconciler) requestsForBucketChange(o client.Object) []reconci
 	}
 
 	var list helmv1.HelmChartList
-	if err := r.List(context.TODO(), &list, client.MatchingFields{
+	if err := r.List(ctx, &list, client.MatchingFields{
 		sourcev1.SourceIndexKey: fmt.Sprintf("%s/%s", helmv1.BucketKind, bucket.Name),
 	}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "failed to list HelmCharts for Bucket change")
 		return nil
 	}
 
 	var reqs []reconcile.Request
-	for _, i := range list.Items {
-		if !bucket.GetArtifact().HasRevision(i.Status.ObservedSourceArtifactRevision) {
-			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&i)})
+	for i, v := range list.Items {
+		if !bucket.GetArtifact().HasRevision(v.Status.ObservedSourceArtifactRevision) {
+			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
 		}
 	}
 	return reqs
@@ -1376,30 +1291,31 @@ func reasonForBuild(build *chart.Build) string {
 func chartRepoConfigErrorReturn(err error, obj *helmv1.HelmChart) (sreconcile.Result, error) {
 	switch err.(type) {
 	case *url.Error:
-		e := &serror.Stalling{
-			Err:    fmt.Errorf("invalid Helm repository URL: %w", err),
-			Reason: sourcev1.URLInvalidReason,
-		}
+		e := serror.NewStalling(
+			fmt.Errorf("invalid Helm repository URL: %w", err),
+			sourcev1.URLInvalidReason,
+		)
 		conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	default:
-		e := &serror.Stalling{
-			Err:    fmt.Errorf("failed to construct Helm client: %w", err),
-			Reason: meta.FailedReason,
-		}
+		e := serror.NewStalling(
+			fmt.Errorf("failed to construct Helm client: %w", err),
+			meta.FailedReason,
+		)
 		conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
 }
 
 // makeVerifiers returns a list of verifiers for the given chart.
-func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.HelmChart, auth authn.Authenticator, keychain authn.Keychain) ([]soci.Verifier, error) {
+func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.HelmChart, clientOpts getter.ClientOpts) ([]soci.Verifier, error) {
 	var verifiers []soci.Verifier
 	verifyOpts := []remote.Option{}
-	if auth != nil {
-		verifyOpts = append(verifyOpts, remote.WithAuth(auth))
+
+	if clientOpts.Authenticator != nil {
+		verifyOpts = append(verifyOpts, remote.WithAuth(clientOpts.Authenticator))
 	} else {
-		verifyOpts = append(verifyOpts, remote.WithAuthFromKeychain(keychain))
+		verifyOpts = append(verifyOpts, remote.WithAuthFromKeychain(clientOpts.Keychain))
 	}
 
 	switch obj.Spec.Verify.Provider {
@@ -1438,6 +1354,15 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 		}
 
 		// if no secret is provided, add a keyless verifier
+		var identities []cosign.Identity
+		for _, match := range obj.Spec.Verify.MatchOIDCIdentity {
+			identities = append(identities, cosign.Identity{
+				IssuerRegExp:  match.Issuer,
+				SubjectRegExp: match.Subject,
+			})
+		}
+		defaultCosignOciOpts = append(defaultCosignOciOpts, soci.WithIdentities(identities))
+
 		verifier, err := soci.NewCosignVerifier(ctx, defaultCosignOciOpts...)
 		if err != nil {
 			return nil, err

@@ -21,15 +21,14 @@ import (
 	"crypto"
 	"fmt"
 
-	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/sigstore/cosign/cmd/cosign/cli/fulcio"
-	"github.com/sigstore/cosign/cmd/cosign/cli/rekor"
-	ociremote "github.com/sigstore/cosign/pkg/oci/remote"
-
 	"github.com/google/go-containerregistry/pkg/name"
-	coptions "github.com/sigstore/cosign/cmd/cosign/cli/options"
-	"github.com/sigstore/cosign/pkg/cosign"
-	"github.com/sigstore/cosign/pkg/oci"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/sigstore/cosign/v2/cmd/cosign/cli/fulcio"
+	coptions "github.com/sigstore/cosign/v2/cmd/cosign/cli/options"
+	"github.com/sigstore/cosign/v2/cmd/cosign/cli/rekor"
+	"github.com/sigstore/cosign/v2/pkg/cosign"
+	"github.com/sigstore/cosign/v2/pkg/oci"
+	ociremote "github.com/sigstore/cosign/v2/pkg/oci/remote"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/signature"
 )
@@ -41,8 +40,9 @@ type Verifier interface {
 
 // options is a struct that holds options for verifier.
 type options struct {
-	PublicKey []byte
-	ROpt      []remote.Option
+	PublicKey  []byte
+	ROpt       []remote.Option
+	Identities []cosign.Identity
 }
 
 // Options is a function that configures the options applied to a Verifier.
@@ -60,6 +60,14 @@ func WithPublicKey(publicKey []byte) Options {
 func WithRemoteOptions(opts ...remote.Option) Options {
 	return func(o *options) {
 		o.ROpt = opts
+	}
+}
+
+// WithIdentities specifies the identity matchers that have to be met
+// for the signature to be deemed valid.
+func WithIdentities(identities []cosign.Identity) Options {
+	return func(opts *options) {
+		opts.Identities = identities
 	}
 }
 
@@ -83,6 +91,7 @@ func NewCosignVerifier(ctx context.Context, opts ...Options) (*CosignVerifier, e
 		return nil, err
 	}
 
+	checkOpts.Identities = o.Identities
 	if o.ROpt != nil {
 		co = append(co, ociremote.WithRemoteOptions(o.ROpt...))
 	}
@@ -93,6 +102,11 @@ func NewCosignVerifier(ctx context.Context, opts ...Options) (*CosignVerifier, e
 	// If there is no public key provided, it will try keyless verification.
 	// https://github.com/sigstore/cosign/blob/main/KEYLESS.md.
 	if len(o.PublicKey) > 0 {
+		checkOpts.Offline = true
+		// TODO(hidde): this is an oversight in our implementation. As it is
+		//  theoretically possible to have a custom PK, without disabling tlog.
+		checkOpts.IgnoreTlog = true
+
 		pubKeyRaw, err := cryptoutils.UnmarshalPEMToPublicKey(o.PublicKey)
 		if err != nil {
 			return nil, err
@@ -103,23 +117,31 @@ func NewCosignVerifier(ctx context.Context, opts ...Options) (*CosignVerifier, e
 			return nil, err
 		}
 	} else {
-		rcerts, err := fulcio.GetRoots()
-		if err != nil {
-			return nil, fmt.Errorf("unable to get Fulcio root certs: %w", err)
-		}
-		checkOpts.RootCerts = rcerts
-
-		icerts, err := fulcio.GetIntermediates()
-		if err != nil {
-			return nil, fmt.Errorf("unable to get Fulcio intermediate certs: %w", err)
-		}
-		checkOpts.IntermediateCerts = icerts
-
-		rc, err := rekor.NewClient(coptions.DefaultRekorURL)
+		checkOpts.RekorClient, err = rekor.NewClient(coptions.DefaultRekorURL)
 		if err != nil {
 			return nil, fmt.Errorf("unable to create Rekor client: %w", err)
 		}
-		checkOpts.RekorClient = rc
+
+		// This performs an online fetch of the Rekor public keys, but this is needed
+		// for verifying tlog entries (both online and offline).
+		// TODO(hidde): above note is important to keep in mind when we implement
+		//  "offline" tlog above.
+		if checkOpts.RekorPubKeys, err = cosign.GetRekorPubs(ctx); err != nil {
+			return nil, fmt.Errorf("unable to get Rekor public keys: %w", err)
+		}
+
+		checkOpts.CTLogPubKeys, err = cosign.GetCTLogPubs(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("unable to get CTLog public keys: %w", err)
+		}
+
+		if checkOpts.RootCerts, err = fulcio.GetRoots(); err != nil {
+			return nil, fmt.Errorf("unable to get Fulcio root certs: %w", err)
+		}
+
+		if checkOpts.IntermediateCerts, err = fulcio.GetIntermediates(); err != nil {
+			return nil, fmt.Errorf("unable to get Fulcio intermediate certs: %w", err)
+		}
 	}
 
 	return &CosignVerifier{

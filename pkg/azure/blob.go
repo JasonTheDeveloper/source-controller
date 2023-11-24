@@ -31,13 +31,13 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	_ "github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/fluxcd/pkg/masktoken"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1beta2"
 )
 
@@ -192,7 +192,7 @@ func (c *BlobClient) BucketExists(ctx context.Context, bucketName string) (bool,
 
 		// For a container-level SASToken, we get an AuthenticationFailed when the bucket doesn't exist
 		if bloberror.HasCode(err, bloberror.AuthenticationFailed) {
-			return false, fmt.Errorf("Bucket name may be incorrect, it does not exist or caller does not have enough permissions: %w", err)
+			return false, fmt.Errorf("the specified bucket name may be incorrect, nonexistent, or the caller might lack sufficient permissions to access it: %w", err)
 		}
 
 		return false, err
@@ -265,7 +265,7 @@ func (c *BlobClient) FGetObject(ctx context.Context, bucketName, objectName, loc
 // bucket, calling visit for every item.
 // If the underlying client or the visit callback returns an error,
 // it returns early.
-func (c *BlobClient) VisitObjects(ctx context.Context, bucketName string, visit func(path, etag string) error) error {
+func (c *BlobClient) VisitObjects(ctx context.Context, bucketName string, prefix string, visit func(path, etag string) error) error {
 	items := c.NewListBlobsFlatPager(bucketName, nil)
 	for items.More() {
 		resp, err := items.NextPage(ctx)
@@ -285,9 +285,7 @@ func (c *BlobClient) VisitObjects(ctx context.Context, bucketName string, visit 
 }
 
 // Close has no effect on BlobClient.
-func (c *BlobClient) Close(_ context.Context) {
-	return
-}
+func (c *BlobClient) Close(_ context.Context) {}
 
 // ObjectIsNotFound checks if the error provided is an azblob.StorageError with
 // an azblob.StorageErrorCodeBlobNotFound error code.
@@ -422,7 +420,11 @@ func chainCredentialWithSecret(secret *corev1.Secret) (azcore.TokenCredential, e
 		if file, ok := os.LookupEnv("AZURE_FEDERATED_TOKEN_FILE"); ok {
 			if _, ok := os.LookupEnv("AZURE_AUTHORITY_HOST"); ok {
 				if tenantID, ok := os.LookupEnv("AZURE_TENANT_ID"); ok {
-					if token, _ := azidentity.NewWorkloadIdentityCredential(tenantID, clientID, file, &azidentity.WorkloadIdentityCredentialOptions{}); token != nil {
+					if token, _ := azidentity.NewWorkloadIdentityCredential(&azidentity.WorkloadIdentityCredentialOptions{
+						ClientID:      clientID,
+						TenantID:      tenantID,
+						TokenFilePath: file,
+					}); token != nil {
 						creds = append(creds, token)
 					}
 				}

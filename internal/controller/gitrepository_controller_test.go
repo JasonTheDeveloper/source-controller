@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"context"
@@ -28,34 +28,35 @@ import (
 	"testing"
 	"time"
 
-	gogit "github.com/fluxcd/go-git/v5"
-	"github.com/fluxcd/go-git/v5/config"
-	"github.com/fluxcd/go-git/v5/plumbing"
-	"github.com/fluxcd/go-git/v5/plumbing/object"
-	"github.com/fluxcd/go-git/v5/storage/memory"
 	"github.com/go-git/go-billy/v5/memfs"
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v5/storage/memory"
 	. "github.com/onsi/gomega"
 	sshtestdata "golang.org/x/crypto/ssh/testdata"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/pointer"
-	kstatus "sigs.k8s.io/cli-utils/pkg/kstatus/status"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	kstatus "github.com/fluxcd/cli-utils/pkg/kstatus/status"
 	"github.com/fluxcd/pkg/apis/meta"
+	"github.com/fluxcd/pkg/git"
 	"github.com/fluxcd/pkg/gittestserver"
 	"github.com/fluxcd/pkg/runtime/conditions"
 	conditionscheck "github.com/fluxcd/pkg/runtime/conditions/check"
+	"github.com/fluxcd/pkg/runtime/jitter"
 	"github.com/fluxcd/pkg/runtime/patch"
 	"github.com/fluxcd/pkg/ssh"
 	"github.com/fluxcd/pkg/testserver"
 
-	"github.com/fluxcd/pkg/git"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	serror "github.com/fluxcd/source-controller/internal/error"
 	"github.com/fluxcd/source-controller/internal/features"
@@ -64,15 +65,20 @@ import (
 )
 
 const (
-	encodedCommitFixture = `tree f0c522d8cc4c90b73e2bc719305a896e7e3c108a
-parent eb167bc68d0a11530923b1f24b4978535d10b879
-author Stefan Prodan <stefan.prodan@gmail.com> 1633681364 +0300
-committer Stefan Prodan <stefan.prodan@gmail.com> 1633681364 +0300
+	encodedCommitFixture = `tree 35f0b28987e60d4b8dec1f707fd07fef5ad84abc
+parent 8b52742dbc848eb0975e62ae00fbfa4f8108e835
+author Sanskar Jaiswal <jaiswalsanskar078@gmail.com> 1691045123 +0530
+committer Sanskar Jaiswal <jaiswalsanskar078@gmail.com> 1691068951 +0530
 
-Update containerd and runc to fix CVEs
+git/e2e: disable CGO while running e2e tests
 
-Signed-off-by: Stefan Prodan <stefan.prodan@gmail.com>
+Disable CGO for Git e2e tests as it was originially required because of
+our libgit2 client. Since we no longer maintain a libgit2 client, there
+is no need to run the tests with CGO enabled.
+
+Signed-off-by: Sanskar Jaiswal <jaiswalsanskar078@gmail.com>
 `
+
 	malformedEncodedCommitFixture = `parent eb167bc68d0a11530923b1f24b4978535d10b879
 author Stefan Prodan <stefan.prodan@gmail.com> 1633681364 +0300
 committer Stefan Prodan <stefan.prodan@gmail.com> 1633681364 +0300
@@ -83,65 +89,119 @@ Signed-off-by: Stefan Prodan <stefan.prodan@gmail.com>
 `
 	signatureCommitFixture = `-----BEGIN PGP SIGNATURE-----
 
-iHUEABEIAB0WIQQHgExUr4FrLdKzpNYyma6w5AhbrwUCYV//1AAKCRAyma6w5Ahb
-r7nJAQCQU4zEJu04/Q0ac/UaL6htjhq/wTDNMeUM+aWG/LcBogEAqFUea1oR2BJQ
-JCJmEtERFh39zNWSazQmxPAFhEE0kbc=
-=+Wlj
+iQIzBAABCAAdFiEEOxEY0f3iSZ5rKQ+vWYLQJ5wif/0FAmTLqnEACgkQWYLQJ5wi
+f/1mYw/+LRttvfPrfYl7ASUBGYSQuDzjeold8OO1LpmwjrKPpX4ivZbXHh+lJF0F
+fqudKuJfJzeQCHsMZjnfgvXHd2VvxPh1jX6h3JLuNu7d4g1DtNQsKJtsLx7JW99X
+J9Bb1xj0Ghh2PkrWEB9vpw+uZz4IhFrB+DNNLRNBkon3etrS1q57q8dhQFIhLI1y
+ij3rq3kFHjrNNdokIv2ujyVJtWgy2fK2ELW5v2dznpykOo7hQEKgtOIHPBzGBFT0
+dUFjB99Qy4Qgjh3vWaY4fZ3u/vhp3swmw91OlDkFeyndWjDSZhzYnb7wY+U6z35C
+aU4Gzc71CquSd/nTdOEkpuolBVWV5cBkM+Nxi8jtVGBeDDFE49j27a3lQ3+qtT7/
+q4FCe5Jw3GSOJvaLBLGmYVn9fc49t/28b5tkGtCHs3ATpsJohzELEIiDP90Me7hQ
+Joks3ML38T4J/zZ4/ObbVMkrCEATYe3r1Ep7+e6VmOG9iTg0JIexexddjHX26Tgu
+iuVP2GD/8PceqgNW/LPX84Ub32WTKPZJg+NyliDjH5QOvmguK1dRtSb/9eyYcoSF
+Fkf0HcgG5jOk0OZJv0QcqXd9PhB4oXeuXgGszo9M+fhr3nWvEooAJtIyLtVtt/u2
+rNNB7xkZ1uWx+52w9RG2gmZh+LaESwd1rNXgUFLNBebNN3jNzsA=
+=73xf
 -----END PGP SIGNATURE-----`
+
+	encodedTagFixture = `object 11525516bd55152ce68848bb14680aad43f18479
+type commit
+tag v0.1.0
+tagger Sanskar Jaiswal <jaiswalsanskar078@gmail.com> 1691132850 +0530
+
+v0.1.0
+`
+
+	malformedEncodedTagFixture = `object 11525516bd55152ce68848bb14680aad43f18479
+tagger Sanskar Jaiswal <jaiswalsanskar078@gmail.com> 1691132850 +0530
+
+v0.1.0
+`
+
+	signatureTagFixture = `-----BEGIN PGP SIGNATURE-----
+
+iQIzBAABCAAdFiEEOxEY0f3iSZ5rKQ+vWYLQJ5wif/0FAmTMo7IACgkQWYLQJ5wi
+f/1uUQ/9F70u8LZZQ3+U2vuYQ8fyVp/AV5h5zwxK5UlkR1crB0gSpdaiIxMMQRc8
+4QQIqCXloSHherUu9SPbDe9Qmr0JL8a57XqThjUSa52IYMDVos9sYwViJit+xGyz
+HDot2nQ8MAqkDaiuwAnTqOyTPA89U36lGV/X/25mYxAuED+8xFx1OfvjGkX2eMEr
+peWJ8VEfdFr2OmWwFceh6iF/izIaZGttwCyNy4BIh2W0GvUtQAxzqF4IzUvwfJU/
+bgARaHKQhWqFhDNImttsqJBweWavEDDmUgNg80c3cUZKqBtAjElToP9gis/SnPH5
+zaCAH66OzyKIhn6lde7KpOzyqbOyzddTa8SKkAAHyO7onukOktV8W9toeAxlF20q
+Bw0MZGzAGisF8EK1HVv8UzrW9vAwdJN/yDIHWkjaeHr2FHmeV3a2QxH9PdwbE3tI
+B21TCVULJuM8oR0ZG62xzg5ba5HiZMiilNMJdrBfjk5xYGk3LQU1gB4FVYa7yTsN
+YfAokYtUIG187Qb8vPr1P95TzZxKdb7r/PAKEbGPro5D2Rri8OnxO/OaXG/giWS5
+5gRGmsQjvMsbzE/2PVc9+jshtZM49xL9H3DMjAWtO6MFbOqGqdi4MBa0T4qj6sZz
+AbSLuRIBpXDES86faDXLRmufc95+iA/fh7W23G6vmd+SjXnCcHc=
+=o4nf
+-----END PGP SIGNATURE-----
+`
+
 	armoredKeyRingFixture = `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
-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
-=/4e+
+mQINBGQmiZ0BEACwsubUFoWtp6iJDK9oUN4RhPS0bAKpcRTa7P/rTCD/MbTMYdWC
+4vod3FMm4+rNF0SESxY67MGmR4M3dSyOZkCijqHm9jDVOvN847LOl5bntkm8Euxm
+LkpfsBWng09+gtfwuKxOxPMY017D1jM23OGbrqznHaokerFeDp9sJf1C7Z9jVf39
+oB/MF0bMdUJuxFFBdpoI73DORlAVUI14mfDbFj7v02Spkv1hqS2LtJ/Jl4QR/Vw4
+mR71aFmGFWqLBlkUOjJ2SZGkCmF/qbUdLmVb7yZUtqtua4DVkBPTORfOMhGDbrME
+Nmb6Ft5neZwU0ETsT/oc6Np+PDFSUDBxu0CbKG6bw7N2y8RfiVJTaoNLFoFGV5dA
+K8OpyTxU4IEPDMpkWs7tpRxPCC02uCfyqlvdF4EURXYXTj54DDLOGQjoqB+iGtVi
+y2dQ4cuNhfuIFCFTA16s41DwmB0fQuOg3yfPPo7+jUefD+iAt3CZ9Guvu5+/mGyq
+KxSBBRFHc8ED/L7JLPMU6tZglaPch9P4H6Fi2swDryyZQn/a2kYanEh9v1wL94L4
+3gUdjIYP8kjfg7nnS2FX9hl5FtPeM3jvnWjfv9jR+c8HWQZY2wM3Rj5iulu70K2U
+pkdRUN0p2D5+Kq6idNreNoPlpQGoUOYrtAfOwtDFgMwuOZ78XkSIbFhtgwARAQAB
+tEVTYW5za2FyIEphaXN3YWwgKEdpdEh1YiBHUEcgc2lnaW5nIGtleSkgPGphaXN3
+YWxzYW5za2FyMDc4QGdtYWlsLmNvbT6JAk4EEwEIADgWIQQ7ERjR/eJJnmspD69Z
+gtAnnCJ//QUCZCaJnQIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBZgtAn
+nCJ//dF4D/0Tl5Wre6KrZvjDs5loulhN8YMYb63jr+x1eVkpMpta51XvZvkZFoiY
+9T4MQX+qgAkTrUJsxgWUwtVtDfmbyLXodDRS6JUbCRiMu12VD7mNT+lUfuhR2sJv
+rHZoolQp7X4DTea1R64PcttfmlGO2pUNpGNmhojO0PahXqOCHmEUWBJQhI8RvOcs
+zRjEzDcAcEgtMGzamq6DR54YxyzGE8V9b5WD/elmEXM6uWW+CkfX8WskKbLdRY0t
++GQ1pOtf3tKxD46I3LIsUEwbyh4Dv4vJbZmyxjI+FKbSCW5tMrz/ZWrPNl0m+pDI
+Yn0+GWed2pgTMFh3VAhYCyIVugKynlaToH+D2z3DnuEp3Jfs+b1BdirS/PW79tW7
+rjCJzqofF2UPyK0mzdYL+P3k9Hip5J0bCGoeMdCLsP5fYq3Y1YS4bH4JkDm52y+r
+y89AH4LHHQt+A7w19I+6M2jmcNnDUMrpuSo84GeoM59O3fU7hLCC1Jx4hj7EBRrb
+QzY5FInrE/WTcgFRljK46zhW4ybmfak/xJV654UqJCDWlVbc68D8JrKNQOj7gdPs
+zh1+m2pFDEhWZkaFtQbSEpXMIJ9DsCoyQL4Knl+89VxHsrIyAJsmGb3V8xvtv5w9
+QuWtsDnYbvDHtTpu1NZChVrnr/l1k3C2fcLhV1s583AvhGMkbgSXkQ==
+=Tdjz
 -----END PGP PUBLIC KEY BLOCK-----
 `
 )
+
+func TestGitRepositoryReconciler_deleteBeforeFinalizer(t *testing.T) {
+	g := NewWithT(t)
+
+	namespaceName := "gitrepo-" + randStringRunes(5)
+	namespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: namespaceName},
+	}
+	g.Expect(k8sClient.Create(ctx, namespace)).ToNot(HaveOccurred())
+	t.Cleanup(func() {
+		g.Expect(k8sClient.Delete(ctx, namespace)).NotTo(HaveOccurred())
+	})
+
+	gitRepo := &sourcev1.GitRepository{}
+	gitRepo.Name = "test-gitrepo"
+	gitRepo.Namespace = namespaceName
+	gitRepo.Spec = sourcev1.GitRepositorySpec{
+		Interval: metav1.Duration{Duration: interval},
+		URL:      "https://example.com",
+	}
+	// Add a test finalizer to prevent the object from getting deleted.
+	gitRepo.SetFinalizers([]string{"test-finalizer"})
+	g.Expect(k8sClient.Create(ctx, gitRepo)).NotTo(HaveOccurred())
+	// Add deletion timestamp by deleting the object.
+	g.Expect(k8sClient.Delete(ctx, gitRepo)).NotTo(HaveOccurred())
+
+	r := &GitRepositoryReconciler{
+		Client:        k8sClient,
+		EventRecorder: record.NewFakeRecorder(32),
+		Storage:       testStorage,
+	}
+	// NOTE: Only a real API server responds with an error in this scenario.
+	_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(gitRepo)})
+	g.Expect(err).NotTo(HaveOccurred())
+}
 
 func TestGitRepositoryReconciler_Reconcile(t *testing.T) {
 	g := NewWithT(t)
@@ -242,10 +302,12 @@ func TestGitRepositoryReconciler_reconcileSource_emptyRepository(t *testing.T) {
 		},
 	}
 
-	builder := fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme())
+	clientBuilder := fakeclient.NewClientBuilder().
+		WithScheme(testEnv.GetScheme()).
+		WithStatusSubresource(&sourcev1.GitRepository{})
 
 	r := &GitRepositoryReconciler{
-		Client:        builder.Build(),
+		Client:        clientBuilder.Build(),
 		EventRecorder: record.NewFakeRecorder(32),
 		Storage:       testStorage,
 		patchOptions:  getPatchOptions(gitRepositoryReadyCondition.Owned, "sc"),
@@ -337,6 +399,32 @@ func TestGitRepositoryReconciler_reconcileSource_authStrategy(t *testing.T) {
 				},
 				Data: map[string][]byte{
 					"caFile": tlsCA,
+				},
+			},
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Spec.SecretRef = &meta.LocalObjectReference{Name: "ca-file"}
+			},
+			want: sreconcile.ResultSuccess,
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: new upstream revision 'master@sha1:<commit>'"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: new upstream revision 'master@sha1:<commit>'"),
+			},
+		},
+		{
+			name:     "HTTPS with CAFile secret with both ca.crt and caFile keys makes Reconciling=True and ignores caFile",
+			protocol: "https",
+			server: options{
+				publicKey:  tlsPublicKey,
+				privateKey: tlsPrivateKey,
+				ca:         tlsCA,
+			},
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "ca-file",
+				},
+				Data: map[string][]byte{
+					"ca.crt": tlsCA,
+					"caFile": []byte("invalid"),
 				},
 			},
 			beforeFunc: func(obj *sourcev1.GitRepository) {
@@ -549,19 +637,19 @@ func TestGitRepositoryReconciler_reconcileSource_authStrategy(t *testing.T) {
 				tt.beforeFunc(obj)
 			}
 
-			builder := fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme())
+			clientBuilder := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.GetScheme()).
+				WithStatusSubresource(&sourcev1.GitRepository{})
+
 			if secret != nil {
-				builder.WithObjects(secret.DeepCopy())
+				clientBuilder.WithObjects(secret.DeepCopy())
 			}
 
 			r := &GitRepositoryReconciler{
-				Client:        builder.Build(),
+				Client:        clientBuilder.Build(),
 				EventRecorder: record.NewFakeRecorder(32),
 				Storage:       testStorage,
-				features: map[string]bool{
-					features.OptimizedGitClones: true,
-				},
-				patchOptions: getPatchOptions(gitRepositoryReadyCondition.Owned, "sc"),
+				patchOptions:  getPatchOptions(gitRepositoryReadyCondition.Owned, "sc"),
 			}
 
 			tmpDir := t.TempDir()
@@ -739,7 +827,7 @@ func TestGitRepositoryReconciler_reconcileSource_checkoutStrategy(t *testing.T) 
 			},
 			beforeFunc: func(obj *sourcev1.GitRepository, latestRev string) {
 				// Set new ignore value.
-				obj.Spec.Ignore = pointer.StringPtr("foo")
+				obj.Spec.Ignore = ptr.To("foo")
 				// Add existing artifact on the object and storage.
 				obj.Status = sourcev1.GitRepositoryStatus{
 					Artifact: &sourcev1.Artifact{
@@ -782,13 +870,13 @@ func TestGitRepositoryReconciler_reconcileSource_checkoutStrategy(t *testing.T) 
 	}
 
 	r := &GitRepositoryReconciler{
-		Client:        fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme()).Build(),
+		Client: fakeclient.NewClientBuilder().
+			WithScheme(testEnv.GetScheme()).
+			WithStatusSubresource(&sourcev1.GitRepository{}).
+			Build(),
 		EventRecorder: record.NewFakeRecorder(32),
 		Storage:       testStorage,
-		features: map[string]bool{
-			features.OptimizedGitClones: true,
-		},
-		patchOptions: getPatchOptions(gitRepositoryReadyCondition.Owned, "sc"),
+		patchOptions:  getPatchOptions(gitRepositoryReadyCondition.Owned, "sc"),
 	}
 
 	for _, tt := range tests {
@@ -882,7 +970,7 @@ func TestGitRepositoryReconciler_reconcileArtifact(t *testing.T) {
 			},
 			afterFunc: func(t *WithT, obj *sourcev1.GitRepository) {
 				t.Expect(obj.GetArtifact()).ToNot(BeNil())
-				t.Expect(obj.GetArtifact().Digest).To(Equal("sha256:60a3bf69f337cb5ec9ebd00abefbb6e7f2a2cf27158ecf438d52b2035b184172"))
+				t.Expect(obj.GetArtifact().Digest).To(Equal("sha256:34d9af1a2fcfaef3ee9487d67dc2d642bc7babdb9444a5f60d1f32df32e4de7d"))
 				t.Expect(obj.Status.IncludedArtifacts).ToNot(BeEmpty())
 			},
 			want: sreconcile.ResultSuccess,
@@ -913,11 +1001,11 @@ func TestGitRepositoryReconciler_reconcileArtifact(t *testing.T) {
 			dir:  "testdata/git/repository",
 			beforeFunc: func(obj *sourcev1.GitRepository) {
 				obj.Spec.Interval = metav1.Duration{Duration: interval}
-				obj.Spec.Ignore = pointer.StringPtr("!**.txt\n")
+				obj.Spec.Ignore = ptr.To("!**.txt\n")
 			},
 			afterFunc: func(t *WithT, obj *sourcev1.GitRepository) {
 				t.Expect(obj.GetArtifact()).ToNot(BeNil())
-				t.Expect(obj.GetArtifact().Digest).To(Equal("sha256:11f7f007dce5619bd79e6c57688261058d09f5271e802463ac39f2b9ead7cabd"))
+				t.Expect(obj.GetArtifact().Digest).To(Equal("sha256:a17037f96f541a47bdadcd12ab40b943c50a9ffd25dc8a30a5e9af52971fd94f"))
 			},
 			want: sreconcile.ResultSuccess,
 			assertConditions: []metav1.Condition{
@@ -932,7 +1020,7 @@ func TestGitRepositoryReconciler_reconcileArtifact(t *testing.T) {
 			},
 			afterFunc: func(t *WithT, obj *sourcev1.GitRepository) {
 				t.Expect(obj.GetArtifact()).ToNot(BeNil())
-				t.Expect(obj.GetArtifact().Digest).To(Equal("sha256:29186e024dde5a414cfc990829c6b2e85f6b3bd2d950f50ca9f418f5d2261d79"))
+				t.Expect(obj.GetArtifact().Digest).To(Equal("sha256:ad9943d761b30e943e2a770ea9083a40fc03f09846efd61f6c442cc48fefad11"))
 			},
 			want: sreconcile.ResultSuccess,
 			assertConditions: []metav1.Condition{
@@ -948,7 +1036,7 @@ func TestGitRepositoryReconciler_reconcileArtifact(t *testing.T) {
 			},
 			afterFunc: func(t *WithT, obj *sourcev1.GitRepository) {
 				t.Expect(obj.GetArtifact()).ToNot(BeNil())
-				t.Expect(obj.GetArtifact().Digest).To(Equal("sha256:60a3bf69f337cb5ec9ebd00abefbb6e7f2a2cf27158ecf438d52b2035b184172"))
+				t.Expect(obj.GetArtifact().Digest).To(Equal("sha256:34d9af1a2fcfaef3ee9487d67dc2d642bc7babdb9444a5f60d1f32df32e4de7d"))
 			},
 			want: sreconcile.ResultSuccess,
 			assertConditions: []metav1.Condition{
@@ -987,7 +1075,7 @@ func TestGitRepositoryReconciler_reconcileArtifact(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			resetChmod(tt.dir, 0o755, 0o644)
+			resetChmod(tt.dir, 0o750, 0o600)
 
 			r := &GitRepositoryReconciler{
 				EventRecorder: record.NewFakeRecorder(32),
@@ -1129,13 +1217,16 @@ func TestGitRepositoryReconciler_reconcileInclude(t *testing.T) {
 				depObjs = append(depObjs, obj)
 			}
 
-			builder := fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme())
+			clientBuilder := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.GetScheme()).
+				WithStatusSubresource(&sourcev1.GitRepository{})
+
 			if len(tt.dependencies) > 0 {
-				builder.WithObjects(depObjs...)
+				clientBuilder.WithObjects(depObjs...)
 			}
 
 			r := &GitRepositoryReconciler{
-				Client:            builder.Build(),
+				Client:            clientBuilder.Build(),
 				EventRecorder:     record.NewFakeRecorder(32),
 				Storage:           storage,
 				requeueDependency: dependencyInterval,
@@ -1225,17 +1316,17 @@ func TestGitRepositoryReconciler_reconcileStorage(t *testing.T) {
 						Path:     fmt.Sprintf("/reconcile-storage/%s.txt", v),
 						Revision: v,
 					}
-					if err := testStorage.MkdirAll(*obj.Status.Artifact); err != nil {
+					if err := storage.MkdirAll(*obj.Status.Artifact); err != nil {
 						return err
 					}
-					if err := testStorage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader(v), 0o640); err != nil {
+					if err := storage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader(v), 0o640); err != nil {
 						return err
 					}
 					if n != len(revisions)-1 {
 						time.Sleep(time.Second * 1)
 					}
 				}
-				testStorage.SetArtifactURL(obj.Status.Artifact)
+				storage.SetArtifactURL(obj.Status.Artifact)
 				conditions.MarkTrue(obj, meta.ReadyCondition, "foo", "bar")
 				return nil
 			},
@@ -1272,12 +1363,74 @@ func TestGitRepositoryReconciler_reconcileStorage(t *testing.T) {
 					Path:     "/reconcile-storage/invalid.txt",
 					Revision: "e",
 				}
-				testStorage.SetArtifactURL(obj.Status.Artifact)
+				storage.SetArtifactURL(obj.Status.Artifact)
 				return nil
 			},
 			want: sreconcile.ResultSuccess,
 			assertPaths: []string{
 				"!/reconcile-storage/invalid.txt",
+			},
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: disappeared from storage"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: disappeared from storage"),
+			},
+		},
+		{
+			name: "notices empty artifact digest",
+			beforeFunc: func(obj *sourcev1.GitRepository, storage *Storage) error {
+				f := "empty-digest.txt"
+
+				obj.Status.Artifact = &sourcev1.Artifact{
+					Path:     fmt.Sprintf("/reconcile-storage/%s.txt", f),
+					Revision: "fake",
+				}
+
+				if err := storage.MkdirAll(*obj.Status.Artifact); err != nil {
+					return err
+				}
+				if err := storage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader(f), 0o600); err != nil {
+					return err
+				}
+
+				// Overwrite with a different digest
+				obj.Status.Artifact.Digest = ""
+
+				return nil
+			},
+			want: sreconcile.ResultSuccess,
+			assertPaths: []string{
+				"!/reconcile-storage/empty-digest.txt",
+			},
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: disappeared from storage"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: disappeared from storage"),
+			},
+		},
+		{
+			name: "notices artifact digest mismatch",
+			beforeFunc: func(obj *sourcev1.GitRepository, storage *Storage) error {
+				f := "digest-mismatch.txt"
+
+				obj.Status.Artifact = &sourcev1.Artifact{
+					Path:     fmt.Sprintf("/reconcile-storage/%s.txt", f),
+					Revision: "fake",
+				}
+
+				if err := storage.MkdirAll(*obj.Status.Artifact); err != nil {
+					return err
+				}
+				if err := storage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader(f), 0o600); err != nil {
+					return err
+				}
+
+				// Overwrite with a different digest
+				obj.Status.Artifact.Digest = "sha256:6c329d5322473f904e2f908a51c12efa0ca8aa4201dd84f2c9d203a6ab3e9023"
+
+				return nil
+			},
+			want: sreconcile.ResultSuccess,
+			assertPaths: []string{
+				"!/reconcile-storage/digest-mismatch.txt",
 			},
 			assertConditions: []metav1.Condition{
 				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: disappeared from storage"),
@@ -1293,10 +1446,10 @@ func TestGitRepositoryReconciler_reconcileStorage(t *testing.T) {
 					Digest:   "sha256:3b9c358f36f0a31b6ad3e14f309c7cf198ac9246e8316f9ce543d5b19ac02b80",
 					URL:      "http://outdated.com/reconcile-storage/hostname.txt",
 				}
-				if err := testStorage.MkdirAll(*obj.Status.Artifact); err != nil {
+				if err := storage.MkdirAll(*obj.Status.Artifact); err != nil {
 					return err
 				}
-				if err := testStorage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader("file"), 0o640); err != nil {
+				if err := storage.AtomicWriteFile(obj.Status.Artifact, strings.NewReader("file"), 0o640); err != nil {
 					return err
 				}
 				conditions.MarkTrue(obj, meta.ReadyCondition, "foo", "bar")
@@ -1327,7 +1480,10 @@ func TestGitRepositoryReconciler_reconcileStorage(t *testing.T) {
 			}()
 
 			r := &GitRepositoryReconciler{
-				Client:        fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme()).Build(),
+				Client: fakeclient.NewClientBuilder().
+					WithScheme(testEnv.GetScheme()).
+					WithStatusSubresource(&sourcev1.GitRepository{}).
+					Build(),
 				EventRecorder: record.NewFakeRecorder(32),
 				Storage:       testStorage,
 				features:      features.FeatureGates(),
@@ -1409,18 +1565,50 @@ func TestGitRepositoryReconciler_reconcileDelete(t *testing.T) {
 	g.Expect(obj.Status.Artifact).To(BeNil())
 }
 
-func TestGitRepositoryReconciler_verifyCommitSignature(t *testing.T) {
+func TestGitRepositoryReconciler_verifySignature(t *testing.T) {
 	tests := []struct {
-		name             string
-		secret           *corev1.Secret
-		commit           git.Commit
-		beforeFunc       func(obj *sourcev1.GitRepository)
-		want             sreconcile.Result
-		wantErr          bool
-		assertConditions []metav1.Condition
+		name                       string
+		secret                     *corev1.Secret
+		commit                     git.Commit
+		beforeFunc                 func(obj *sourcev1.GitRepository)
+		want                       sreconcile.Result
+		wantErr                    bool
+		err                        error
+		wantSourceVerificationMode *sourcev1.GitVerificationMode
+		assertConditions           []metav1.Condition
 	}{
 		{
-			name: "Valid commit makes SourceVerifiedCondition=True",
+			name: "Valid commit with mode=HEAD makes SourceVerifiedCondition=True",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "existing",
+				},
+				Data: map[string][]byte{
+					"foo": []byte(armoredKeyRingFixture),
+				},
+			},
+			commit: git.Commit{
+				Hash:      []byte("shasum"),
+				Encoded:   []byte(encodedCommitFixture),
+				Signature: signatureCommitFixture,
+			},
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Spec.Interval = metav1.Duration{Duration: interval}
+				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
+					Mode: sourcev1.ModeGitHEAD,
+					SecretRef: meta.LocalObjectReference{
+						Name: "existing",
+					},
+				}
+			},
+			want:                       sreconcile.ResultSuccess,
+			wantSourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitHEAD),
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(sourcev1.SourceVerifiedCondition, meta.SucceededReason, "verified signature of\n\t- commit 'shasum' with key '5982D0279C227FFD'"),
+			},
+		},
+		{
+			name: "Valid commit with mode=head makes SourceVerifiedCondition=True",
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "existing",
@@ -1443,13 +1631,200 @@ func TestGitRepositoryReconciler_verifyCommitSignature(t *testing.T) {
 					},
 				}
 			},
-			want: sreconcile.ResultSuccess,
+			want:                       sreconcile.ResultSuccess,
+			wantSourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitHEAD),
 			assertConditions: []metav1.Condition{
-				*conditions.TrueCondition(sourcev1.SourceVerifiedCondition, meta.SucceededReason, "verified signature of commit 'shasum'"),
+				*conditions.TrueCondition(sourcev1.SourceVerifiedCondition, meta.SucceededReason, "verified signature of\n\t- commit 'shasum' with key '5982D0279C227FFD'"),
 			},
 		},
 		{
-			name: "Invalid commit sets no SourceVerifiedCondition and returns error",
+			name: "Valid tag with mode=tag makes SourceVerifiedCondition=True",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "existing",
+				},
+				Data: map[string][]byte{
+					"foo": []byte(armoredKeyRingFixture),
+				},
+			},
+			commit: git.Commit{
+				ReferencingTag: &git.Tag{
+					Name:      "v0.1.0",
+					Hash:      []byte("shasum"),
+					Encoded:   []byte(encodedTagFixture),
+					Signature: signatureTagFixture,
+				},
+			},
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Spec.Reference = &sourcev1.GitRepositoryRef{
+					Tag: "v0.1.0",
+				}
+				obj.Spec.Interval = metav1.Duration{Duration: interval}
+				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
+					Mode: sourcev1.ModeGitTag,
+					SecretRef: meta.LocalObjectReference{
+						Name: "existing",
+					},
+				}
+			},
+			want:                       sreconcile.ResultSuccess,
+			wantSourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitTag),
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(sourcev1.SourceVerifiedCondition, meta.SucceededReason, "verified signature of\n\t- tag 'v0.1.0@shasum' with key '5982D0279C227FFD'"),
+			},
+		},
+		{
+			name: "Valid tag and commit with mode=TagAndHEAD makes SourceVerifiedCondition=True",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "existing",
+				},
+				Data: map[string][]byte{
+					"foo": []byte(armoredKeyRingFixture),
+				},
+			},
+			commit: git.Commit{
+				Hash:      []byte("shasum"),
+				Encoded:   []byte(encodedCommitFixture),
+				Signature: signatureCommitFixture,
+				ReferencingTag: &git.Tag{
+					Name:      "v0.1.0",
+					Hash:      []byte("shasum"),
+					Encoded:   []byte(encodedTagFixture),
+					Signature: signatureTagFixture,
+				},
+			},
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Spec.Reference = &sourcev1.GitRepositoryRef{
+					Tag: "v0.1.0",
+				}
+				obj.Spec.Interval = metav1.Duration{Duration: interval}
+				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
+					Mode: sourcev1.ModeGitTagAndHEAD,
+					SecretRef: meta.LocalObjectReference{
+						Name: "existing",
+					},
+				}
+			},
+			want:                       sreconcile.ResultSuccess,
+			wantSourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitTagAndHEAD),
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(sourcev1.SourceVerifiedCondition, meta.SucceededReason, "verified signature of\n\t- tag 'v0.1.0@shasum' with key '5982D0279C227FFD'\n\t- commit 'shasum' with key '5982D0279C227FFD'"),
+			},
+		},
+		{
+			name: "Source verification mode in status is unset if there's no verification in spec",
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Status.SourceVerificationMode = ptrToVerificationMode(sourcev1.ModeGitHEAD)
+				obj.Spec.Verification = nil
+			},
+			want: sreconcile.ResultSuccess,
+		},
+		{
+			name: "Verification of tag with no tag ref SourceVerifiedCondition=False and returns a stalling error",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "existing",
+				},
+				Data: map[string][]byte{
+					"foo": []byte(armoredKeyRingFixture),
+				},
+			},
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Spec.Reference = &sourcev1.GitRepositoryRef{
+					Branch: "main",
+				}
+				obj.Spec.Interval = metav1.Duration{Duration: interval}
+				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
+					Mode: sourcev1.ModeGitTag,
+					SecretRef: meta.LocalObjectReference{
+						Name: "existing",
+					},
+				}
+			},
+			wantErr: true,
+			err: serror.NewStalling(
+				errors.New("cannot verify tag object's signature if a tag reference is not specified"),
+				"InvalidVerificationMode",
+			),
+			assertConditions: []metav1.Condition{
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, "InvalidVerificationMode", "cannot verify tag object's signature if a tag reference is not specified"),
+			},
+		},
+		{
+			name: "Unsigned tag with mode=tag makes SourceVerifiedCondition=False",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "existing",
+				},
+				Data: map[string][]byte{
+					"foo": []byte(armoredKeyRingFixture),
+				},
+			},
+			commit: git.Commit{
+				ReferencingTag: &git.Tag{
+					Name:    "v0.1.0",
+					Hash:    []byte("shasum"),
+					Encoded: []byte(encodedTagFixture),
+				},
+			},
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Spec.Reference = &sourcev1.GitRepositoryRef{
+					Tag: "v0.1.0",
+				}
+				obj.Spec.Interval = metav1.Duration{Duration: interval}
+				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
+					Mode: sourcev1.ModeGitTag,
+					SecretRef: meta.LocalObjectReference{
+						Name: "existing",
+					},
+				}
+			},
+			wantErr: true,
+			assertConditions: []metav1.Condition{
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, "InvalidGitObject", "cannot verify signature of tag 'v0.1.0@shasum' since it is not signed"),
+			},
+		},
+		{
+			name: "Partially successful verification makes SourceVerifiedCondition=False",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "existing",
+				},
+				Data: map[string][]byte{
+					"foo": []byte(armoredKeyRingFixture),
+				},
+			},
+			commit: git.Commit{
+				Hash:      []byte("shasum"),
+				Encoded:   []byte(malformedEncodedCommitFixture),
+				Signature: signatureCommitFixture,
+				ReferencingTag: &git.Tag{
+					Name:      "v0.1.0",
+					Hash:      []byte("shasum"),
+					Encoded:   []byte(encodedTagFixture),
+					Signature: signatureTagFixture,
+				},
+			},
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Spec.Reference = &sourcev1.GitRepositoryRef{
+					Tag: "v0.1.0",
+				}
+				obj.Spec.Interval = metav1.Duration{Duration: interval}
+				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
+					Mode: sourcev1.ModeGitTagAndHEAD,
+					SecretRef: meta.LocalObjectReference{
+						Name: "existing",
+					},
+				}
+			},
+			wantErr: true,
+			assertConditions: []metav1.Condition{
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, "InvalidCommitSignature", "signature verification of commit 'shasum' failed: unable to verify Git commit: unable to verify payload with any of the given key rings"),
+			},
+		},
+		{
+			name: "Invalid commit makes SourceVerifiedCondition=False and returns error",
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "existing",
@@ -1463,7 +1838,7 @@ func TestGitRepositoryReconciler_verifyCommitSignature(t *testing.T) {
 			beforeFunc: func(obj *sourcev1.GitRepository) {
 				obj.Spec.Interval = metav1.Duration{Duration: interval}
 				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
-					Mode: "head",
+					Mode: sourcev1.ModeGitHEAD,
 					SecretRef: meta.LocalObjectReference{
 						Name: "existing",
 					},
@@ -1471,15 +1846,79 @@ func TestGitRepositoryReconciler_verifyCommitSignature(t *testing.T) {
 			},
 			wantErr: true,
 			assertConditions: []metav1.Condition{
-				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, "InvalidCommitSignature", "signature verification of commit 'shasum' failed: unable to verify commit with any of the given key rings"),
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, "InvalidCommitSignature", "signature verification of commit 'shasum' failed: unable to verify Git commit: unable to verify payload with any of the given key rings"),
 			},
 		},
 		{
-			name: "Secret get failure sets no SourceVerifiedCondition and returns error",
+			name: "Invalid tag signature with mode=tag makes SourceVerifiedCondition=False",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "existing",
+				},
+				Data: map[string][]byte{
+					"foo": []byte(armoredKeyRingFixture),
+				},
+			},
+			commit: git.Commit{
+				ReferencingTag: &git.Tag{
+					Name:      "v0.1.0",
+					Hash:      []byte("shasum"),
+					Encoded:   []byte(malformedEncodedTagFixture),
+					Signature: signatureTagFixture,
+				},
+			},
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Spec.Reference = &sourcev1.GitRepositoryRef{
+					Tag: "v0.1.0",
+				}
+				obj.Spec.Interval = metav1.Duration{Duration: interval}
+				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
+					Mode: sourcev1.ModeGitTag,
+					SecretRef: meta.LocalObjectReference{
+						Name: "existing",
+					},
+				}
+			},
+			wantErr: true,
+			assertConditions: []metav1.Condition{
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, "InvalidTagSignature", "signature verification of tag 'v0.1.0@shasum' failed: unable to verify Git tag: unable to verify payload with any of the given key rings"),
+			},
+		},
+		{
+			name: "Invalid PGP key makes SourceVerifiedCondition=False and returns error",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "invalid",
+				},
+				Data: map[string][]byte{
+					"foo": []byte("invalid PGP public key"),
+				},
+			},
+			commit: git.Commit{
+				Hash:      []byte("shasum"),
+				Encoded:   []byte(malformedEncodedCommitFixture),
+				Signature: signatureCommitFixture,
+			},
 			beforeFunc: func(obj *sourcev1.GitRepository) {
 				obj.Spec.Interval = metav1.Duration{Duration: interval}
 				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
-					Mode: "head",
+					Mode: sourcev1.ModeGitHEAD,
+					SecretRef: meta.LocalObjectReference{
+						Name: "invalid",
+					},
+				}
+			},
+			wantErr: true,
+			assertConditions: []metav1.Condition{
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, "InvalidCommitSignature", "signature verification of commit 'shasum' failed: unable to verify Git commit: unable to read armored key ring: openpgp: invalid argument: no armored data found"),
+			},
+		},
+		{
+			name: "Secret get failure makes SourceVerifiedCondition=False and returns error",
+			beforeFunc: func(obj *sourcev1.GitRepository) {
+				obj.Spec.Interval = metav1.Duration{Duration: interval}
+				obj.Spec.Verification = &sourcev1.GitRepositoryVerification{
+					Mode: sourcev1.ModeGitHEAD,
 					SecretRef: meta.LocalObjectReference{
 						Name: "none-existing",
 					},
@@ -1515,14 +1954,17 @@ func TestGitRepositoryReconciler_verifyCommitSignature(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			builder := fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme())
+			clientBuilder := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.GetScheme()).
+				WithStatusSubresource(&sourcev1.GitRepository{})
+
 			if tt.secret != nil {
-				builder.WithObjects(tt.secret)
+				clientBuilder.WithObjects(tt.secret)
 			}
 
 			r := &GitRepositoryReconciler{
 				EventRecorder: record.NewFakeRecorder(32),
-				Client:        builder.Build(),
+				Client:        clientBuilder.Build(),
 				features:      features.FeatureGates(),
 				patchOptions:  getPatchOptions(gitRepositoryReadyCondition.Owned, "sc"),
 			}
@@ -1539,10 +1981,90 @@ func TestGitRepositoryReconciler_verifyCommitSignature(t *testing.T) {
 				tt.beforeFunc(obj)
 			}
 
-			got, err := r.verifyCommitSignature(context.TODO(), obj, tt.commit)
+			got, err := r.verifySignature(context.TODO(), obj, tt.commit)
 			g.Expect(obj.Status.Conditions).To(conditions.MatchConditions(tt.assertConditions))
 			g.Expect(err != nil).To(Equal(tt.wantErr))
+			if tt.err != nil {
+				g.Expect(err).To(Equal(tt.err))
+			}
 			g.Expect(got).To(Equal(tt.want))
+			if tt.wantSourceVerificationMode != nil {
+				g.Expect(*obj.Status.SourceVerificationMode).To(Equal(*tt.wantSourceVerificationMode))
+			} else {
+				g.Expect(obj.Status.SourceVerificationMode).To(BeNil())
+			}
+		})
+	}
+}
+
+func TestGitRepositoryReconciler_getProxyOpts(t *testing.T) {
+	invalidProxy := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "invalid-proxy",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"url": []byte("https://example.com"),
+		},
+	}
+	validProxy := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "valid-proxy",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"address":  []byte("https://example.com"),
+			"username": []byte("user"),
+			"password": []byte("pass"),
+		},
+	}
+
+	clientBuilder := fakeclient.NewClientBuilder().
+		WithScheme(testEnv.GetScheme()).
+		WithObjects(invalidProxy, validProxy)
+
+	r := &GitRepositoryReconciler{
+		Client: clientBuilder.Build(),
+	}
+
+	tests := []struct {
+		name      string
+		secret    string
+		err       string
+		proxyOpts *transport.ProxyOptions
+	}{
+		{
+			name:   "non-existent secret",
+			secret: "non-existent",
+			err:    "failed to get proxy secret 'default/non-existent': ",
+		},
+		{
+			name:   "invalid proxy secret",
+			secret: "invalid-proxy",
+			err:    "invalid proxy secret 'default/invalid-proxy': key 'address' is missing",
+		},
+		{
+			name:   "valid proxy secret",
+			secret: "valid-proxy",
+			proxyOpts: &transport.ProxyOptions{
+				URL:      "https://example.com",
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			opts, err := r.getProxyOpts(context.TODO(), tt.secret, "default")
+			if opts != nil {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(opts).To(Equal(tt.proxyOpts))
+			} else {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring(tt.err))
+			}
 		})
 	}
 }
@@ -1659,10 +2181,13 @@ func TestGitRepositoryReconciler_ConditionsUpdate(t *testing.T) {
 				tt.beforeFunc(obj)
 			}
 
-			builder := fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme()).WithObjects(obj)
+			clientBuilder := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.GetScheme()).
+				WithObjects(obj).
+				WithStatusSubresource(&sourcev1.GitRepository{})
 
 			r := &GitRepositoryReconciler{
-				Client:        builder.Build(),
+				Client:        clientBuilder.Build(),
 				EventRecorder: record.NewFakeRecorder(32),
 				Storage:       testStorage,
 				features:      features.FeatureGates(),
@@ -1838,6 +2363,7 @@ func TestGitRepositoryReconciler_statusConditions(t *testing.T) {
 		name             string
 		beforeFunc       func(obj *sourcev1.GitRepository)
 		assertConditions []metav1.Condition
+		wantErr          bool
 	}{
 		{
 			name: "multiple positive conditions",
@@ -1866,6 +2392,7 @@ func TestGitRepositoryReconciler_statusConditions(t *testing.T) {
 				*conditions.TrueCondition(sourcev1.StorageOperationFailedCondition, sourcev1.DirCreationFailedReason, "failed to create directory"),
 				*conditions.TrueCondition(sourcev1.ArtifactOutdatedCondition, "NewRevision", "some error"),
 			},
+			wantErr: true,
 		},
 		{
 			name: "mixed positive and negative conditions",
@@ -1878,6 +2405,7 @@ func TestGitRepositoryReconciler_statusConditions(t *testing.T) {
 				*conditions.TrueCondition(sourcev1.FetchFailedCondition, sourcev1.AuthenticationFailedReason, "failed to get secret"),
 				*conditions.TrueCondition(sourcev1.ArtifactInStorageCondition, meta.SucceededReason, "stored artifact for revision"),
 			},
+			wantErr: true,
 		},
 	}
 
@@ -1887,16 +2415,20 @@ func TestGitRepositoryReconciler_statusConditions(t *testing.T) {
 
 			obj := &sourcev1.GitRepository{
 				TypeMeta: metav1.TypeMeta{
+					APIVersion: sourcev1.GroupVersion.String(),
 					Kind:       sourcev1.GitRepositoryKind,
-					APIVersion: "source.toolkit.fluxcd.io/v1beta2",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "gitrepo",
 					Namespace: "foo",
 				},
 			}
-			clientBuilder := fake.NewClientBuilder()
-			clientBuilder.WithObjects(obj)
+
+			clientBuilder := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.Scheme()).
+				WithObjects(obj).
+				WithStatusSubresource(&sourcev1.GitRepository{})
+
 			c := clientBuilder.Build()
 
 			serialPatcher := patch.NewSerialPatcher(obj, c)
@@ -1906,20 +2438,19 @@ func TestGitRepositoryReconciler_statusConditions(t *testing.T) {
 			}
 
 			ctx := context.TODO()
-			recResult := sreconcile.ResultSuccess
-			var retErr error
-
 			summarizeHelper := summarize.NewHelper(record.NewFakeRecorder(32), serialPatcher)
 			summarizeOpts := []summarize.Option{
 				summarize.WithConditions(gitRepositoryReadyCondition),
 				summarize.WithBiPolarityConditionTypes(sourcev1.SourceVerifiedCondition),
-				summarize.WithReconcileResult(recResult),
-				summarize.WithReconcileError(retErr),
+				summarize.WithReconcileResult(sreconcile.ResultSuccess),
 				summarize.WithIgnoreNotFound(),
-				summarize.WithResultBuilder(sreconcile.AlwaysRequeueResultBuilder{RequeueAfter: obj.GetRequeueAfter()}),
+				summarize.WithResultBuilder(sreconcile.AlwaysRequeueResultBuilder{
+					RequeueAfter: jitter.JitteredIntervalDuration(obj.GetRequeueAfter()),
+				}),
 				summarize.WithPatchFieldOwner("source-controller"),
 			}
-			_, retErr = summarizeHelper.SummarizeAndPatch(ctx, obj, summarizeOpts...)
+			_, err := summarizeHelper.SummarizeAndPatch(ctx, obj, summarizeOpts...)
+			g.Expect(err != nil).To(Equal(tt.wantErr))
 
 			key := client.ObjectKeyFromObject(obj)
 			g.Expect(c.Get(ctx, key, obj)).ToNot(HaveOccurred())
@@ -2178,13 +2709,16 @@ func TestGitRepositoryReconciler_fetchIncludes(t *testing.T) {
 				depObjs = append(depObjs, obj)
 			}
 
-			builder := fakeclient.NewClientBuilder().WithScheme(testEnv.GetScheme())
+			clientBuilder := fakeclient.NewClientBuilder().
+				WithScheme(testEnv.GetScheme()).
+				WithStatusSubresource(&sourcev1.GitRepository{})
+
 			if len(tt.dependencies) > 0 {
-				builder.WithObjects(depObjs...)
+				clientBuilder.WithObjects(depObjs...)
 			}
 
 			r := &GitRepositoryReconciler{
-				Client:        builder.Build(),
+				Client:        clientBuilder.Build(),
 				EventRecorder: record.NewFakeRecorder(32),
 				patchOptions:  getPatchOptions(gitRepositoryReadyCondition.Owned, "sc"),
 			}
@@ -2334,15 +2868,15 @@ func TestGitContentConfigChanged(t *testing.T) {
 		{
 			name: "unobserved ignore",
 			obj: sourcev1.GitRepository{
-				Spec: sourcev1.GitRepositorySpec{Ignore: pointer.String("foo")},
+				Spec: sourcev1.GitRepositorySpec{Ignore: ptr.To("foo")},
 			},
 			want: true,
 		},
 		{
 			name: "observed ignore",
 			obj: sourcev1.GitRepository{
-				Spec:   sourcev1.GitRepositorySpec{Ignore: pointer.String("foo")},
-				Status: sourcev1.GitRepositoryStatus{ObservedIgnore: pointer.String("foo")},
+				Spec:   sourcev1.GitRepositorySpec{Ignore: ptr.To("foo")},
+				Status: sourcev1.GitRepositoryStatus{ObservedIgnore: ptr.To("foo")},
 			},
 			want: false,
 		},
@@ -2606,4 +3140,125 @@ func TestGitContentConfigChanged(t *testing.T) {
 			g.Expect(gitContentConfigChanged(&tt.obj, &includes)).To(Equal(tt.want))
 		})
 	}
+}
+
+func Test_requiresVerification(t *testing.T) {
+	tests := []struct {
+		name string
+		obj  *sourcev1.GitRepository
+		want bool
+	}{
+		{
+			name: "GitRepository without verification does not require verification",
+			obj: &sourcev1.GitRepository{
+				Spec: sourcev1.GitRepositorySpec{},
+			},
+			want: false,
+		},
+		{
+			name: "GitRepository with verification and no observed verification mode in status requires verification",
+			obj: &sourcev1.GitRepository{
+				Spec: sourcev1.GitRepositorySpec{
+					Verification: &sourcev1.GitRepositoryVerification{},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "GitRepository with HEAD verification and a verified tag requires verification",
+			obj: &sourcev1.GitRepository{
+				Spec: sourcev1.GitRepositorySpec{
+					Verification: &sourcev1.GitRepositoryVerification{
+						Mode: sourcev1.ModeGitHEAD,
+					},
+				},
+				Status: sourcev1.GitRepositoryStatus{
+					SourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitTag),
+				},
+			},
+			want: true,
+		},
+		{
+			name: "GitRepository with tag and HEAD verification and a verified tag requires verification",
+			obj: &sourcev1.GitRepository{
+				Spec: sourcev1.GitRepositorySpec{
+					Verification: &sourcev1.GitRepositoryVerification{
+						Mode: sourcev1.ModeGitTagAndHEAD,
+					},
+				},
+				Status: sourcev1.GitRepositoryStatus{
+					SourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitTag),
+				},
+			},
+			want: true,
+		},
+		{
+			name: "GitRepository with tag verification and a verified HEAD requires verification",
+			obj: &sourcev1.GitRepository{
+				Spec: sourcev1.GitRepositorySpec{
+					Verification: &sourcev1.GitRepositoryVerification{
+						Mode: sourcev1.ModeGitTag,
+					},
+				},
+				Status: sourcev1.GitRepositoryStatus{
+					SourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitHEAD),
+				},
+			},
+			want: true,
+		},
+		{
+			name: "GitRepository with tag and HEAD verification and a verified HEAD requires verification",
+			obj: &sourcev1.GitRepository{
+				Spec: sourcev1.GitRepositorySpec{
+					Verification: &sourcev1.GitRepositoryVerification{
+						Mode: sourcev1.ModeGitTagAndHEAD,
+					},
+				},
+				Status: sourcev1.GitRepositoryStatus{
+					SourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitHEAD),
+				},
+			},
+			want: true,
+		},
+		{
+			name: "GitRepository with tag verification and a verified HEAD and tag does not require verification",
+			obj: &sourcev1.GitRepository{
+				Spec: sourcev1.GitRepositorySpec{
+					Verification: &sourcev1.GitRepositoryVerification{
+						Mode: sourcev1.ModeGitTag,
+					},
+				},
+				Status: sourcev1.GitRepositoryStatus{
+					SourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitTagAndHEAD),
+				},
+			},
+			want: false,
+		},
+		{
+			name: "GitRepository with head verification and a verified HEAD and tag does not require verification",
+			obj: &sourcev1.GitRepository{
+				Spec: sourcev1.GitRepositorySpec{
+					Verification: &sourcev1.GitRepositoryVerification{
+						Mode: sourcev1.ModeGitHEAD,
+					},
+				},
+				Status: sourcev1.GitRepositoryStatus{
+					SourceVerificationMode: ptrToVerificationMode(sourcev1.ModeGitTagAndHEAD),
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			verificationRequired := requiresVerification(tt.obj)
+			g.Expect(verificationRequired).To(Equal(tt.want))
+		})
+	}
+}
+
+func ptrToVerificationMode(mode sourcev1.GitVerificationMode) *sourcev1.GitVerificationMode {
+	return &mode
 }

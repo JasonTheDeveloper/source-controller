@@ -138,6 +138,18 @@ string
 </tr>
 <tr>
 <td>
+<code>prefix</code><br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Prefix to use for server-side filtering of files in the Bucket.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>secretRef</code><br>
 <em>
 <a href="https://pkg.go.dev/github.com/fluxcd/pkg/apis/meta#LocalObjectReference">
@@ -161,7 +173,9 @@ Kubernetes meta/v1.Duration
 </em>
 </td>
 <td>
-<p>Interval at which to check the Endpoint for updates.</p>
+<p>Interval at which the Bucket Endpoint is checked for updates.
+This interval is approximate and may be subject to jitter to ensure
+efficient use of resources.</p>
 </td>
 </tr>
 <tr>
@@ -593,7 +607,9 @@ Kubernetes meta/v1.Duration
 </em>
 </td>
 <td>
-<p>Interval is the interval at which to check the Source for updates.</p>
+<p>Interval at which the HelmChart SourceRef is checked for updates.
+This interval is approximate and may be subject to jitter to ensure
+efficient use of resources.</p>
 </td>
 </tr>
 <tr>
@@ -792,8 +808,35 @@ github.com/fluxcd/pkg/apis/meta.LocalObjectReference
 for the HelmRepository.
 For HTTP/S basic auth the secret must contain &lsquo;username&rsquo; and &lsquo;password&rsquo;
 fields.
-For TLS the secret must contain a &lsquo;certFile&rsquo; and &lsquo;keyFile&rsquo;, and/or
-&lsquo;caFile&rsquo; fields.</p>
+Support for TLS auth using the &lsquo;certFile&rsquo; and &lsquo;keyFile&rsquo;, and/or &lsquo;caFile&rsquo;
+keys is deprecated. Please use <code>.spec.certSecretRef</code> instead.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>certSecretRef</code><br>
+<em>
+<a href="https://pkg.go.dev/github.com/fluxcd/pkg/apis/meta#LocalObjectReference">
+github.com/fluxcd/pkg/apis/meta.LocalObjectReference
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>CertSecretRef can be given the name of a Secret containing
+either or both of</p>
+<ul>
+<li>a PEM-encoded client certificate (<code>tls.crt</code>) and private
+key (<code>tls.key</code>);</li>
+<li>a PEM-encoded CA certificate (<code>ca.crt</code>)</li>
+</ul>
+<p>and whichever are supplied, will be used for connecting to the
+registry. The client cert and key are useful if you are
+authenticating with a certificate; the CA cert is useful if
+you are using a self-signed server certificate. The Secret must
+be of type <code>Opaque</code> or <code>kubernetes.io/tls</code>.</p>
+<p>It takes precedence over the values specified in the Secret referred
+to by <code>.spec.secretRef</code>.</p>
 </td>
 </tr>
 <tr>
@@ -823,7 +866,23 @@ Kubernetes meta/v1.Duration
 </em>
 </td>
 <td>
-<p>Interval at which to check the URL for updates.</p>
+<em>(Optional)</em>
+<p>Interval at which the HelmRepository URL is checked for updates.
+This interval is approximate and may be subject to jitter to ensure
+efficient use of resources.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>insecure</code><br>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Insecure allows connecting to a non-TLS HTTP container registry.
+This field is only taken into account if the .spec.type field is set to &lsquo;oci&rsquo;.</p>
 </td>
 </tr>
 <tr>
@@ -838,7 +897,8 @@ Kubernetes meta/v1.Duration
 <td>
 <em>(Optional)</em>
 <p>Timeout is used for the index fetch operation for an HTTPS helm repository,
-and for remote OCI Repository operations like pulling for an OCI helm repository.
+and for remote OCI Repository operations like pulling for an OCI helm
+chart by the associated HelmChart.
 Its default value is 60s.</p>
 </td>
 </tr>
@@ -1086,17 +1146,20 @@ github.com/fluxcd/pkg/apis/meta.LocalObjectReference
 </td>
 <td>
 <em>(Optional)</em>
-<p>CertSecretRef can be given the name of a secret containing
+<p>CertSecretRef can be given the name of a Secret containing
 either or both of</p>
 <ul>
-<li>a PEM-encoded client certificate (<code>certFile</code>) and private
-key (<code>keyFile</code>);</li>
-<li>a PEM-encoded CA certificate (<code>caFile</code>)</li>
+<li>a PEM-encoded client certificate (<code>tls.crt</code>) and private
+key (<code>tls.key</code>);</li>
+<li>a PEM-encoded CA certificate (<code>ca.crt</code>)</li>
 </ul>
 <p>and whichever are supplied, will be used for connecting to the
 registry. The client cert and key are useful if you are
 authenticating with a certificate; the CA cert is useful if
-you are using a self-signed server certificate.</p>
+you are using a self-signed server certificate. The Secret must
+be of type <code>Opaque</code> or <code>kubernetes.io/tls</code>.</p>
+<p>Note: Support for the <code>caFile</code>, <code>certFile</code> and <code>keyFile</code> keys have
+been deprecated.</p>
 </td>
 </tr>
 <tr>
@@ -1109,7 +1172,9 @@ Kubernetes meta/v1.Duration
 </em>
 </td>
 <td>
-<p>The interval at which to check for image updates.</p>
+<p>Interval at which the OCIRepository URL is checked for updates.
+This interval is approximate and may be subject to jitter to ensure
+efficient use of resources.</p>
 </td>
 </tr>
 <tr>
@@ -1384,6 +1449,18 @@ string
 </tr>
 <tr>
 <td>
+<code>prefix</code><br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Prefix to use for server-side filtering of files in the Bucket.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>secretRef</code><br>
 <em>
 <a href="https://pkg.go.dev/github.com/fluxcd/pkg/apis/meta#LocalObjectReference">
@@ -1407,7 +1484,9 @@ Kubernetes meta/v1.Duration
 </em>
 </td>
 <td>
-<p>Interval at which to check the Endpoint for updates.</p>
+<p>Interval at which the Bucket Endpoint is checked for updates.
+This interval is approximate and may be subject to jitter to ensure
+efficient use of resources.</p>
 </td>
 </tr>
 <tr>
@@ -2197,7 +2276,9 @@ Kubernetes meta/v1.Duration
 </em>
 </td>
 <td>
-<p>Interval is the interval at which to check the Source for updates.</p>
+<p>Interval at which the HelmChart SourceRef is checked for updates.
+This interval is approximate and may be subject to jitter to ensure
+efficient use of resources.</p>
 </td>
 </tr>
 <tr>
@@ -2459,8 +2540,35 @@ github.com/fluxcd/pkg/apis/meta.LocalObjectReference
 for the HelmRepository.
 For HTTP/S basic auth the secret must contain &lsquo;username&rsquo; and &lsquo;password&rsquo;
 fields.
-For TLS the secret must contain a &lsquo;certFile&rsquo; and &lsquo;keyFile&rsquo;, and/or
-&lsquo;caFile&rsquo; fields.</p>
+Support for TLS auth using the &lsquo;certFile&rsquo; and &lsquo;keyFile&rsquo;, and/or &lsquo;caFile&rsquo;
+keys is deprecated. Please use <code>.spec.certSecretRef</code> instead.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>certSecretRef</code><br>
+<em>
+<a href="https://pkg.go.dev/github.com/fluxcd/pkg/apis/meta#LocalObjectReference">
+github.com/fluxcd/pkg/apis/meta.LocalObjectReference
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>CertSecretRef can be given the name of a Secret containing
+either or both of</p>
+<ul>
+<li>a PEM-encoded client certificate (<code>tls.crt</code>) and private
+key (<code>tls.key</code>);</li>
+<li>a PEM-encoded CA certificate (<code>ca.crt</code>)</li>
+</ul>
+<p>and whichever are supplied, will be used for connecting to the
+registry. The client cert and key are useful if you are
+authenticating with a certificate; the CA cert is useful if
+you are using a self-signed server certificate. The Secret must
+be of type <code>Opaque</code> or <code>kubernetes.io/tls</code>.</p>
+<p>It takes precedence over the values specified in the Secret referred
+to by <code>.spec.secretRef</code>.</p>
 </td>
 </tr>
 <tr>
@@ -2490,7 +2598,23 @@ Kubernetes meta/v1.Duration
 </em>
 </td>
 <td>
-<p>Interval at which to check the URL for updates.</p>
+<em>(Optional)</em>
+<p>Interval at which the HelmRepository URL is checked for updates.
+This interval is approximate and may be subject to jitter to ensure
+efficient use of resources.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>insecure</code><br>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Insecure allows connecting to a non-TLS HTTP container registry.
+This field is only taken into account if the .spec.type field is set to &lsquo;oci&rsquo;.</p>
 </td>
 </tr>
 <tr>
@@ -2505,7 +2629,8 @@ Kubernetes meta/v1.Duration
 <td>
 <em>(Optional)</em>
 <p>Timeout is used for the index fetch operation for an HTTPS helm repository,
-and for remote OCI Repository operations like pulling for an OCI helm repository.
+and for remote OCI Repository operations like pulling for an OCI helm
+chart by the associated HelmChart.
 Its default value is 60s.</p>
 </td>
 </tr>
@@ -2956,17 +3081,20 @@ github.com/fluxcd/pkg/apis/meta.LocalObjectReference
 </td>
 <td>
 <em>(Optional)</em>
-<p>CertSecretRef can be given the name of a secret containing
+<p>CertSecretRef can be given the name of a Secret containing
 either or both of</p>
 <ul>
-<li>a PEM-encoded client certificate (<code>certFile</code>) and private
-key (<code>keyFile</code>);</li>
-<li>a PEM-encoded CA certificate (<code>caFile</code>)</li>
+<li>a PEM-encoded client certificate (<code>tls.crt</code>) and private
+key (<code>tls.key</code>);</li>
+<li>a PEM-encoded CA certificate (<code>ca.crt</code>)</li>
 </ul>
 <p>and whichever are supplied, will be used for connecting to the
 registry. The client cert and key are useful if you are
 authenticating with a certificate; the CA cert is useful if
-you are using a self-signed server certificate.</p>
+you are using a self-signed server certificate. The Secret must
+be of type <code>Opaque</code> or <code>kubernetes.io/tls</code>.</p>
+<p>Note: Support for the <code>caFile</code>, <code>certFile</code> and <code>keyFile</code> keys have
+been deprecated.</p>
 </td>
 </tr>
 <tr>
@@ -2979,7 +3107,9 @@ Kubernetes meta/v1.Duration
 </em>
 </td>
 <td>
-<p>The interval at which to check for image updates.</p>
+<p>Interval at which the OCIRepository URL is checked for updates.
+This interval is approximate and may be subject to jitter to ensure
+efficient use of resources.</p>
 </td>
 </tr>
 <tr>
@@ -3217,6 +3347,71 @@ github.com/fluxcd/pkg/apis/meta.LocalObjectReference
 <em>(Optional)</em>
 <p>SecretRef specifies the Kubernetes Secret containing the
 trusted public keys.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>matchOIDCIdentity</code><br>
+<em>
+<a href="#source.toolkit.fluxcd.io/v1beta2.OIDCIdentityMatch">
+[]OIDCIdentityMatch
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>MatchOIDCIdentity specifies the identity matching criteria to use
+while verifying an OCI artifact which was signed using Cosign keyless
+signing. The artifact&rsquo;s identity is deemed to be verified if any of the
+specified matchers match against the identity.</p>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<h3 id="source.toolkit.fluxcd.io/v1beta2.OIDCIdentityMatch">OIDCIdentityMatch
+</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#source.toolkit.fluxcd.io/v1beta2.OCIRepositoryVerification">OCIRepositoryVerification</a>)
+</p>
+<p>OIDCIdentityMatch specifies options for verifying the certificate identity,
+i.e. the issuer and the subject of the certificate.</p>
+<div class="md-typeset__scrollwrap">
+<div class="md-typeset__table">
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>issuer</code><br>
+<em>
+string
+</em>
+</td>
+<td>
+<p>Issuer specifies the regex pattern to match against to verify
+the OIDC issuer in the Fulcio certificate. The pattern must be a
+valid Go regular expression.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>subject</code><br>
+<em>
+string
+</em>
+</td>
+<td>
+<p>Subject specifies the regex pattern to match against to verify
+the identity subject in the Fulcio certificate. The pattern must
+be a valid Go regular expression.</p>
 </td>
 </tr>
 </tbody>

@@ -38,7 +38,7 @@ FUZZ_TIME ?= 1m
 GO_STATIC_FLAGS=-ldflags "-s -w" -tags 'netgo,osusergo,static_build$(addprefix ,,$(GO_TAGS))'
 
 # API (doc) generation utilities
-CONTROLLER_GEN_VERSION ?= v0.11.1
+CONTROLLER_GEN_VERSION ?= v0.12.0
 GEN_API_REF_DOCS_VERSION ?= e327d0730470cbd61b06300f81c5fcf91c23c113
 
 # If gobin not set, create one on ./build and add to path.
@@ -63,32 +63,28 @@ endif
 
 all: build
 
-build: check-deps ## Build manager binary
+build: ## Build manager binary
 	go build $(GO_STATIC_FLAGS) -o $(BUILD_DIR)/bin/manager main.go
 
 KUBEBUILDER_ASSETS?="$(shell $(ENVTEST) --arch=$(ENVTEST_ARCH) use -i $(ENVTEST_KUBERNETES_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path)"
-test: install-envtest test-api check-deps ## Run all tests
+test: install-envtest test-api ## Run all tests
 	HTTPS_PROXY="" HTTP_PROXY="" \
 	KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) \
 	GIT_CONFIG_GLOBAL=/dev/null \
+	GIT_CONFIG_NOSYSTEM=true \
 	go test $(GO_STATIC_FLAGS) \
 	  ./... \
 	  $(GO_TEST_ARGS) \
 	  -coverprofile cover.out
 
-test-ctrl: install-envtest test-api check-deps ## Run controller tests
+test-ctrl: install-envtest test-api ## Run controller tests
 	HTTPS_PROXY="" HTTP_PROXY="" \
 	KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) \
 	GIT_CONFIG_GLOBAL=/dev/null \
 	go test $(GO_STATIC_FLAGS) \
 	  -run "^$(GO_TEST_PREFIX).*" \
-	  -v ./controllers \
+	  -v ./internal/controller \
 	  -coverprofile cover.out
-
-check-deps:
-ifeq ($(shell uname -s),Darwin)
-	if ! command -v pkg-config &> /dev/null; then echo "pkg-config is required"; exit 1; fi
-endif
 
 test-api: ## Run api tests
 	cd api; go test $(GO_TEST_ARGS) ./... -coverprofile cover.out
@@ -123,7 +119,7 @@ api-docs: gen-crd-api-reference-docs  ## Generate API reference documentation
 
 tidy:  ## Run go mod tidy
 	cd api; rm -f go.sum; go mod tidy -compat=1.20
-	rm -f go.sum; go mod tidy -compat=1.20
+	rm -f go.sum; go mod tidy -compat=1.21
 
 fmt:  ## Run go fmt against code
 	go fmt ./...

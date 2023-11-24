@@ -38,9 +38,11 @@ type MinioClient struct {
 // NewClient creates a new Minio storage client.
 func NewClient(bucket *sourcev1.Bucket, secret *corev1.Secret) (*MinioClient, error) {
 	opt := minio.Options{
-		Region:       bucket.Spec.Region,
-		Secure:       !bucket.Spec.Insecure,
-		BucketLookup: minio.BucketLookupPath,
+		Region: bucket.Spec.Region,
+		Secure: !bucket.Spec.Insecure,
+		// About BucketLookup, it should be noted that not all S3 providers support
+		// path-type access (e.g., Ali OSS). Hence, we revert to using the default
+		// auto access, which we believe can cover most use cases.
 	}
 
 	if secret != nil {
@@ -103,9 +105,10 @@ func (c *MinioClient) FGetObject(ctx context.Context, bucketName, objectName, lo
 // bucket, calling visit for every item.
 // If the underlying client or the visit callback returns an error,
 // it returns early.
-func (c *MinioClient) VisitObjects(ctx context.Context, bucketName string, visit func(key, etag string) error) error {
+func (c *MinioClient) VisitObjects(ctx context.Context, bucketName string, prefix string, visit func(key, etag string) error) error {
 	for object := range c.Client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{
 		Recursive: true,
+		Prefix:    prefix,
 		UseV1:     s3utils.IsGoogleEndpoint(*c.Client.EndpointURL()),
 	}) {
 		if object.Err != nil {

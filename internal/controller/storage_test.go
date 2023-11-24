@@ -14,12 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fluxcd/go-git/v5/plumbing/format/gitignore"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	. "github.com/onsi/gomega"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -107,9 +109,14 @@ func TestStorage_Archive(t *testing.T) {
 		t.Fatalf("error while bootstrapping storage: %v", err)
 	}
 
-	createFiles := func(files map[string][]byte) (dir string, err error) {
+	type dummyFile struct {
+		content []byte
+		mode    int64
+	}
+
+	createFiles := func(files map[string]dummyFile) (dir string, err error) {
 		dir = t.TempDir()
-		for name, b := range files {
+		for name, df := range files {
 			absPath := filepath.Join(dir, name)
 			if err = os.MkdirAll(filepath.Dir(absPath), 0o750); err != nil {
 				return
@@ -118,18 +125,24 @@ func TestStorage_Archive(t *testing.T) {
 			if err != nil {
 				return "", fmt.Errorf("could not create file %q: %w", absPath, err)
 			}
-			if n, err := f.Write(b); err != nil {
+			if n, err := f.Write(df.content); err != nil {
 				f.Close()
 				return "", fmt.Errorf("could not write %d bytes to file %q: %w", n, f.Name(), err)
 			}
 			f.Close()
+
+			if df.mode != 0 {
+				if err = os.Chmod(absPath, os.FileMode(df.mode)); err != nil {
+					return "", fmt.Errorf("could not chmod file %q: %w", absPath, err)
+				}
+			}
 		}
 		return
 	}
 
-	matchFiles := func(t *testing.T, storage *Storage, artifact sourcev1.Artifact, files map[string][]byte, dirs []string) {
+	matchFiles := func(t *testing.T, storage *Storage, artifact sourcev1.Artifact, files map[string]dummyFile, dirs []string) {
 		t.Helper()
-		for name, b := range files {
+		for name, df := range files {
 			mustExist := !(name[0:1] == "!")
 			if !mustExist {
 				name = name[1:]
@@ -138,7 +151,7 @@ func TestStorage_Archive(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed reading tarball: %v", err)
 			}
-			if bs := int64(len(b)); s != bs {
+			if bs := int64(len(df.content)); s != bs {
 				t.Fatalf("%q size %v != %v", name, s, bs)
 			}
 			if exist != mustExist {
@@ -148,8 +161,12 @@ func TestStorage_Archive(t *testing.T) {
 					t.Errorf("tarball contained excluded file %q", name)
 				}
 			}
-			if exist && m != defaultFileMode {
-				t.Fatalf("%q mode %v != %v", name, m, defaultFileMode)
+			expectMode := df.mode
+			if expectMode == 0 {
+				expectMode = defaultFileMode
+			}
+			if exist && m != expectMode {
+				t.Fatalf("%q mode %v != %v", name, m, expectMode)
 			}
 		}
 		for _, name := range dirs {
@@ -177,68 +194,88 @@ func TestStorage_Archive(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		files    map[string][]byte
+		files    map[string]dummyFile
 		filter   ArchiveFileFilter
-		want     map[string][]byte
+		want     map[string]dummyFile
 		wantDirs []string
 		wantErr  bool
 	}{
 		{
 			name: "no filter",
-			files: map[string][]byte{
-				".git/config":   nil,
-				"file.jpg":      []byte(`contents`),
-				"manifest.yaml": nil,
+			files: map[string]dummyFile{
+				".git/config":   {},
+				"file.jpg":      {content: []byte(`contents`)},
+				"manifest.yaml": {},
 			},
 			filter: nil,
-			want: map[string][]byte{
-				".git/config":   nil,
-				"file.jpg":      []byte(`contents`),
-				"manifest.yaml": nil,
+			want: map[string]dummyFile{
+				".git/config":   {},
+				"file.jpg":      {content: []byte(`contents`)},
+				"manifest.yaml": {},
 			},
 		},
 		{
 			name: "exclude VCS",
-			files: map[string][]byte{
-				".git/config":   nil,
-				"manifest.yaml": nil,
+			files: map[string]dummyFile{
+				".git/config":   {},
+				"manifest.yaml": {},
 			},
 			wantDirs: []string{
 				"!.git",
 			},
 			filter: SourceIgnoreFilter(nil, nil),
-			want: map[string][]byte{
-				"!.git/config":  nil,
-				"manifest.yaml": nil,
+			want: map[string]dummyFile{
+				"!.git/config":  {},
+				"manifest.yaml": {},
 			},
 		},
 		{
 			name: "custom",
-			files: map[string][]byte{
-				".git/config": nil,
-				"custom":      nil,
-				"horse.jpg":   nil,
+			files: map[string]dummyFile{
+				".git/config": {},
+				"custom":      {},
+				"horse.jpg":   {},
 			},
 			filter: SourceIgnoreFilter([]gitignore.Pattern{
 				gitignore.ParsePattern("custom", nil),
 			}, nil),
-			want: map[string][]byte{
-				"!git/config": nil,
-				"!custom":     nil,
-				"horse.jpg":   nil,
+			want: map[string]dummyFile{
+				"!git/config": {},
+				"!custom":     {},
+				"horse.jpg":   {},
 			},
 			wantErr: false,
 		},
 		{
 			name: "including directories",
-			files: map[string][]byte{
-				"test/.gitkeep": nil,
+			files: map[string]dummyFile{
+				"test/.gitkeep": {},
 			},
 			filter: SourceIgnoreFilter([]gitignore.Pattern{
 				gitignore.ParsePattern("custom", nil),
 			}, nil),
 			wantDirs: []string{
 				"test",
+			},
+			wantErr: false,
+		},
+		{
+			name: "sets default file modes",
+			files: map[string]dummyFile{
+				"test/file": {
+					mode: 0o666,
+				},
+				"test/executable": {
+					mode: 0o777,
+				},
+			},
+			want: map[string]dummyFile{
+				"test/file": {
+					mode: defaultFileMode,
+				},
+				"test/executable": {
+					mode: defaultExeFileMode,
+				},
 			},
 			wantErr: false,
 		},
@@ -263,6 +300,44 @@ func TestStorage_Archive(t *testing.T) {
 			matchFiles(t, storage, artifact, tt.want, tt.wantDirs)
 		})
 	}
+}
+
+func TestStorage_Remove(t *testing.T) {
+	t.Run("removes file", func(t *testing.T) {
+		g := NewWithT(t)
+
+		dir := t.TempDir()
+
+		s, err := NewStorage(dir, "", 0, 0)
+		g.Expect(err).ToNot(HaveOccurred())
+
+		artifact := sourcev1.Artifact{
+			Path: filepath.Join(dir, "test.txt"),
+		}
+		g.Expect(s.MkdirAll(artifact)).To(Succeed())
+		g.Expect(s.AtomicWriteFile(&artifact, bytes.NewReader([]byte("test")), 0o600)).To(Succeed())
+		g.Expect(s.ArtifactExist(artifact)).To(BeTrue())
+
+		g.Expect(s.Remove(artifact)).To(Succeed())
+		g.Expect(s.ArtifactExist(artifact)).To(BeFalse())
+	})
+
+	t.Run("error if file does not exist", func(t *testing.T) {
+		g := NewWithT(t)
+
+		dir := t.TempDir()
+
+		s, err := NewStorage(dir, "", 0, 0)
+		g.Expect(err).ToNot(HaveOccurred())
+
+		artifact := sourcev1.Artifact{
+			Path: filepath.Join(dir, "test.txt"),
+		}
+
+		err = s.Remove(artifact)
+		g.Expect(err).To(HaveOccurred())
+		g.Expect(errors.Is(err, os.ErrNotExist)).To(BeTrue())
+	})
 }
 
 func TestStorageRemoveAllButCurrent(t *testing.T) {
@@ -717,4 +792,62 @@ func TestStorage_GarbageCollect(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStorage_VerifyArtifact(t *testing.T) {
+	g := NewWithT(t)
+
+	dir := t.TempDir()
+	s, err := NewStorage(dir, "", 0, 0)
+	g.Expect(err).ToNot(HaveOccurred(), "failed to create new storage")
+
+	g.Expect(os.WriteFile(filepath.Join(dir, "artifact"), []byte("test"), 0o600)).To(Succeed())
+
+	t.Run("artifact without digest", func(t *testing.T) {
+		g := NewWithT(t)
+
+		err := s.VerifyArtifact(sourcev1.Artifact{})
+		g.Expect(err).To(HaveOccurred())
+		g.Expect(err).To(MatchError("artifact has no digest"))
+	})
+
+	t.Run("artifact with invalid digest", func(t *testing.T) {
+		g := NewWithT(t)
+
+		err := s.VerifyArtifact(sourcev1.Artifact{Digest: "invalid"})
+		g.Expect(err).To(HaveOccurred())
+		g.Expect(err).To(MatchError("failed to parse artifact digest 'invalid': invalid checksum digest format"))
+	})
+
+	t.Run("artifact with invalid path", func(t *testing.T) {
+		g := NewWithT(t)
+
+		err := s.VerifyArtifact(sourcev1.Artifact{
+			Digest: "sha256:9ba7a35ce8acd3557fe30680ef193ca7a36bb5dc62788f30de7122a0a5beab69",
+			Path:   "invalid",
+		})
+		g.Expect(err).To(HaveOccurred())
+		g.Expect(errors.Is(err, os.ErrNotExist)).To(BeTrue())
+	})
+
+	t.Run("artifact with digest mismatch", func(t *testing.T) {
+		g := NewWithT(t)
+
+		err := s.VerifyArtifact(sourcev1.Artifact{
+			Digest: "sha256:9ba7a35ce8acd3557fe30680ef193ca7a36bb5dc62788f30de7122a0a5beab69",
+			Path:   "artifact",
+		})
+		g.Expect(err).To(HaveOccurred())
+		g.Expect(err).To(MatchError("computed digest doesn't match 'sha256:9ba7a35ce8acd3557fe30680ef193ca7a36bb5dc62788f30de7122a0a5beab69'"))
+	})
+
+	t.Run("artifact with digest match", func(t *testing.T) {
+		g := NewWithT(t)
+
+		err := s.VerifyArtifact(sourcev1.Artifact{
+			Digest: "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+			Path:   "artifact",
+		})
+		g.Expect(err).ToNot(HaveOccurred())
+	})
 }

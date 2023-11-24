@@ -139,6 +139,14 @@ To authenticate towards a Git repository over HTTPS using bearer token
 authentication (in other words: using a `Authorization: Bearer` header), the referenced
 Secret is expected to contain the token in `.data.bearerToken`.
 
+**Note:** If you are looking to use OAuth tokens with popular servers (e.g.
+[GitHub](https://docs.github.com/en/rest/overview/authenticating-to-the-rest-api?apiVersion=2022-11-28#authenticating-with-a-token-generated-by-an-app),
+[Bitbucket](https://support.atlassian.com/bitbucket-cloud/docs/using-access-tokens/),
+[GitLab](https://docs.gitlab.com/ee/gitlab-basics/start-using-git.html#clone-using-a-token)),
+you should use basic access authentication instead. These servers use basic HTTP
+authentication, with the OAuth token as the password. Check the documentation of
+your Git server for details.
+
 ```yaml
 ---
 apiVersion: v1
@@ -153,8 +161,9 @@ data:
 #### HTTPS Certificate Authority
 
 To provide a Certificate Authority to trust while connecting with a Git
-repository over HTTPS, the referenced Secret can contain a `.data.caFile`
-value.
+repository over HTTPS, the referenced Secret's `.data` can contain a `ca.crt`
+or `caFile` key. `ca.crt` takes precedence over `caFile`, i.e. if both keys 
+are present, the value of `ca.crt` will be taken into consideration.
 
 ```yaml
 ---
@@ -165,7 +174,7 @@ metadata:
   namespace: default
 type: Opaque
 data:
-  caFile: <BASE64>
+  ca.crt: <BASE64>
 ```
 
 #### SSH authentication
@@ -215,6 +224,11 @@ e.g. `10m0s` to reconcile the object every 10 minutes.
 
 If the `.metadata.generation` of a resource changes (due to e.g. a change to
 the spec), this is handled instantly outside the interval window.
+
+**Note:** The controller can be configured to apply a jitter to the interval in
+order to distribute the load more evenly when multiple GitRepository objects are
+set up with the same interval. For more information, please refer to the
+[source-controller configuration options](https://fluxcd.io/flux/components/source/options/).
 
 ### Timeout
 
@@ -311,6 +325,12 @@ Valid examples are: `refs/heads/main`, `refs/tags/v0.1.0`, `refs/pull/420/head`,
 This field takes precedence over [`.branch`](#branch-example),
 [`.tag`](#tag-example), and [`.semver`](#semver-example).
 
+**Note:** Azure DevOps and AWS CodeCommit do not support fetching the HEAD of
+a pull request. While Azure DevOps allows you to fetch the merge commit that
+will be created after merging a PR (using `refs/pull/<id>/merge`), this field
+can only be used to fetch references that exist in the current state of the Git
+repository and not references that will be created in the future.
+
 #### Commit example
 
 To Git checkout a specified commit, use `.spec.ref.commit`:
@@ -347,8 +367,17 @@ spec:
 `.spec.verify` is an optional field to enable the verification of Git commit
 signatures. The field offers two subfields:
 
-- `.mode`, to specify what Git commit object should be verified. Only supports
-  `head` at present.
+- `.mode`, to specify what Git object(s) should be verified. Supported
+  values are:
+  - `HEAD`: Verifies the commit object pointed to by the HEAD of the repository
+     after performing a checkout via `.spec.ref`.
+  - `head`: Same as `HEAD`, supported for backwards compatibility purposes.
+  - `Tag`: Verifies the tag object pointed to by the specified/inferred tag
+     reference in `.spec.ref.tag`, `.spec.ref.semver` or `.spec.ref.name`.
+  - `TagAndHEAD`: Verifies the tag object pointed to by the specified/inferred tag
+     reference in `.spec.ref.tag`, `.spec.ref.semver` or `.spec.ref.name` and
+     the commit object pointed to by the tag.
+
 - `.secretRef.name`, to specify a reference to a Secret in the same namespace as
   the GitRepository. Containing the (PGP) public keys of trusted Git authors.
 
@@ -365,7 +394,7 @@ spec:
   ref:
     branch: master
   verify:
-    mode: head
+    mode: HEAD
     secretRef:
       name: pgp-public-keys
 ```
@@ -425,28 +454,54 @@ GitRepository, and changes to the resource or in the Git repository will not
 result in a new Artifact. When the field is set to `false` or removed, it will
 resume.
 
-#### Optimized Git clones
+### Proxy secret reference
 
-Optimized Git clones decreases resource utilization for GitRepository
-reconciliations.
+`.spec.proxySecretRef.name` is an optional field used to specify the name of a
+Secret that contains the proxy settings for the object. These settings are used
+for all remote Git operations related to the GitRepository.
+The Secret can contain three keys:
 
-When enabled, it avoids full Git clone operations by first checking whether
-the revision of the last stored artifact is still the head of the remote
-repository and none of the other factors that contribute to a change in the
-artifact, like ignore rules and included repositories, have changed. If that is
-so, the reconciliation is skipped. Else, a full reconciliation is performed as
-usual.
+- `address`, to specify the address of the proxy server. This is a required key.
+- `username`, to specify the username to use if the proxy server is protected by
+   basic authentication. This is an optional key.
+- `password`, to specify the password to use if the proxy server is protected by
+   basic authentication. This is an optional key.
 
-This feature is enabled by default. It can be disabled by starting the
-controller with the argument `--feature-gates=OptimizedGitClones=false`.
+The proxy server must be either HTTP/S or SOCKS5. You can use a SOCKS5 proxy
+with a HTTP/S Git repository url.
 
-NB: GitRepository objects configured for SemVer or Commit clones are
-not affected by this functionality.
+Examples:
 
-#### Proxy support
+```yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: http-proxy
+type: Opaque
+stringData:
+  address: http://proxy.com
+  username: mandalorian
+  password: grogu
+```
 
-When a proxy is configured in the source-controller Pod through the appropriate
-environment variables, for example `HTTPS_PROXY`, `NO_PROXY`, etc.
+```yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssh-proxy
+type: Opaque
+stringData:
+  address: socks5://proxy.com
+  username: mandalorian
+  password: grogu
+```
+
+Proxying can also be configured in the source-controller Deployment directly by
+using the standard environment variables such as `HTTPS_PROXY`, `ALL_PROXY`, etc.
+
+`.spec.proxySecretRef.name` takes precedence over all environment variables.
 
 ### Recurse submodules
 
@@ -932,6 +987,15 @@ status:
     toPath: bar
   ...
 ```
+
+### Source Verification Mode
+
+The source-controller reports the Git object(s) it verified in the Git
+repository to create an artifact in the GitRepository's
+`.status.sourceVerificationMode`. This value is the same as the [verification
+mode in spec](#verification). The verification status is applicable only to the
+latest Git repository revision used to successfully build and store an
+artifact.
 
 ### Observed Generation
 

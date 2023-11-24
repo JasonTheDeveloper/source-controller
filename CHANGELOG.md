@@ -2,6 +2,276 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.2
+
+**Release date:** 2023-10-11
+
+This patch release fixes a bug where OCIRepository objects can't be consumed
+when the OCI image layer contains symlinks.
+
+Fixes:
+- oci: Skip symlinks found in upstream artifacts
+  [#1246](https://github.com/fluxcd/source-controller/pull/1246/)
+
+Improvements:
+- build(deps): bump the ci group with 1 update
+  [#1256](https://github.com/fluxcd/source-controller/pull/1256)
+
+## 1.1.1
+
+**Release date:** 2023-09-18
+
+This is a patch release that fixes a regression introduced in v1.1.0 where
+HelmRepository objects would not be reconciled if they provided a TLS Secret
+using `.spec.secretRef` with a type other than `Opaque` or `kubernetes.io/tls`.
+
+In addition, the URL lookup strategy for Buckets has been changed from path to
+auto, to widen support for S3-compatible object storage services.
+
+Lastly, several dependencies have been updated to their latest versions.
+
+Fixes:
+- bucket: use auto lookup type
+  [#1222](https://github.com/fluxcd/source-controller/pull/1222)
+- helmrepo: fix Secret type check for TLS via `.spec.secretRef`
+  [#1225](https://github.com/fluxcd/source-controller/pull/1225)
+- Upgrade github.com/fluxcd/pkg/{git,git/gogit}
+  [#1236](https://github.com/fluxcd/source-controller/pull/1236)
+
+Improvements:
+- build(deps): bump the ci group dependencies
+  [#1213](https://github.com/fluxcd/source-controller/pull/1213)
+  [#1224](https://github.com/fluxcd/source-controller/pull/1224)
+  [#1230](https://github.com/fluxcd/source-controller/pull/1230)
+  [#1235](https://github.com/fluxcd/source-controller/pull/1235)
+- docs: Add missing pem-encoding reference
+  [#1216](https://github.com/fluxcd/source-controller/pull/1216)
+- build(deps): bump github.com/cyphar/filepath-securejoin from 0.2.3 to 0.2.4
+  [#1227](https://github.com/fluxcd/source-controller/pull/1227)
+
+## 1.1.0
+
+**Release date:** 2023-08-23
+
+This minor release comes with API changes, bug fixes and several new features.
+
+All APIs that accept TLS data have been modified to adopt Secrets of type
+`kubernetes.io/tls`. This includes:
+* HelmRepository: The field `.spec.secretRef` has been __deprecated__ in favor
+of a new field [`.spec.certSecretRef`](https://github.com/fluxcd/source-controller/blob/v1.1.0/docs/spec/v1beta2/helmrepositories.md#cert-secret-reference).
+  This field is also supported by OCI HelmRepositories.
+* OCIRepository: Support for the`caFile`, `keyFile` and `certFile` keys in the
+  Secret specified in [`.spec.certSecretRef`](https://github.com/fluxcd/source-controller/blob/v1.1.0/docs/spec/v1beta2/ocirepositories.md#cert-secret-reference)
+  have been __deprecated__ in favor of `ca.crt`, `tls.key` and `tls.crt`.
+  Also, the Secret now must be of type `Opaque` or `kubernete.io/tls`.
+* GitRepository: CA certificate can now be provided in the Secret sepcified in
+  `.spec.secretRef` using the `ca.crt` key, which takes precedence over the
+  existing `caFile` key.
+
+Furthermore, GitRepository has a couple of new features:
+* Proxy support: A new field [`.spec.proxySecretRef`](https://github.com/fluxcd/source-controller/blob/v1.1.0/docs/spec/v1/gitrepositories.md#proxy-secret-reference)
+  has been introduced which can be used to specify the proxy configuration to
+  use for all remote Git operations related to the particular object.
+* Tag verification: The field [`.spec.verification.mode`](https://github.com/fluxcd/source-controller/blob/v1.1.0/docs/spec/v1/gitrepositories.md#verification)
+  now supports the following values:
+    * HEAD: Verify the HEAD of the Git repository.
+    * Tag: Verify the tag specified in `.spec.ref`
+    * TagAndHead: Verify the tag specified in `.spec.ref` and the commit it
+      points to.
+
+Starting with this version, the controller now stops exporting an object's
+metrics as soon as the object has been deleted.
+
+In addition, the controller now consumes significantly less CPU and memory when
+reconciling Helm repository indexes.
+
+Lastly, a new flag `--interval-jitter-percentage` has been introduced which can
+be used to specify a jitter to the reconciliation interval in order to
+distribute the load more evenly when multiple objects are set up with the same
+interval.
+
+Improvements:
+- gitrepo: Add support for specifying proxy per `GitRepository`
+  [#1109](https://github.com/fluxcd/source-controller/pull/1109)
+- helmrepo: add `.spec.certSecretRef` for specifying TLS auth data
+  [#1160](https://github.com/fluxcd/source-controller/pull/1160)
+- Update docs on Azure identity
+  [#1167](https://github.com/fluxcd/source-controller/pull/1167)
+- gitrepo: document limitation of `spec.ref.name` with Azure Devops
+  [#1175](https://github.com/fluxcd/source-controller/pull/1175)
+- ocirepo: add cosign support for insecure HTTP registries
+  [#1176](https://github.com/fluxcd/source-controller/pull/1176)
+- Handle delete before adding finalizer
+  [#1177](https://github.com/fluxcd/source-controller/pull/1177)
+- Store Helm indexes in JSON format
+  [#1178](https://github.com/fluxcd/source-controller/pull/1178)
+- Unpin go-git and update to v5.8.1
+  [#1179](https://github.com/fluxcd/source-controller/pull/1179)
+- controller: jitter requeue interval
+  [#1184](https://github.com/fluxcd/source-controller/pull/1184)
+- cache: ensure new expiration is persisted
+  [#1185](https://github.com/fluxcd/source-controller/pull/1185)
+- gitrepo: add support for Git tag verification
+  [#1187](https://github.com/fluxcd/source-controller/pull/1187)
+- Update dependencies
+  [#1191](https://github.com/fluxcd/source-controller/pull/1191)
+- Adopt Kubernetes style TLS Secrets
+  [#1194](https://github.com/fluxcd/source-controller/pull/1194)
+- Update dependencies
+  [#1196](https://github.com/fluxcd/source-controller/pull/1196)
+- Helm OCI: Add support for TLS registries with self-signed certs
+  [#1197](https://github.com/fluxcd/source-controller/pull/1197)
+- Update dependencies
+  [#1202](https://github.com/fluxcd/source-controller/pull/1202)
+- Preserve url encoded path in normalized helm repository URL
+  [#1203](https://github.com/fluxcd/source-controller/pull/1203)
+- Fix link ref in API docs
+  [#1204](https://github.com/fluxcd/source-controller/pull/1204)
+
+Fixes:
+- Fix the helm cache arguments
+  [#1170](https://github.com/fluxcd/source-controller/pull/1170)
+- Delete stale metrics on object delete
+  [#1183](https://github.com/fluxcd/source-controller/pull/1183)
+- Disable system-wide git config in tests
+  [#1192](https://github.com/fluxcd/source-controller/pull/1192)
+- Fix links in API docs
+  [#1200](https://github.com/fluxcd/source-controller/pull/1200)
+
+## 1.0.1
+
+**Release date:** 2023-07-10
+
+This is a patch release that fixes the AWS authentication for cross-region ECR repositories.
+
+Fixes:
+- Update `fluxcd/pkg/oci` to fix ECR cross-region auth
+  [#1158](https://github.com/fluxcd/source-controller/pull/1158)
+
+## 1.0.0
+
+**Release date:** 2023-07-03
+
+This is the first stable release of the controller. From now on, this controller
+follows the [Flux 2 release cadence and support pledge](https://fluxcd.io/flux/releases/).
+
+Starting with this version, the build, release and provenance portions of the
+Flux project supply chain [provisionally meet SLSA Build Level 3](https://fluxcd.io/flux/security/slsa-assessment/).
+
+This release includes several minor changes that primarily focus on addressing
+forgotten and obsolete bits in the logic related to GitRepository objects.
+
+Including a removal of the `OptimizedGitClones` feature flag. If your
+Deployment is configured to disable this flag, you should remove it.
+
+In addition, dependencies have been updated to their latest version, including
+an update of Kubernetes to v1.27.3.
+
+For a comprehensive list of changes since `v0.36.x`, please refer to the
+changelog for [v1.0.0-rc.1](#100-rc1), [v1.0.0-rc.3](#100-rc3) and
+[`v1.0.0-rc.4`](#100-rc4).
+
+Improvements:
+- gitrepo: remove `OptimizedGitClones` as a feature gate
+  [#1124](https://github.com/fluxcd/source-controller/pull/1124)
+  [#1126](https://github.com/fluxcd/source-controller/pull/1126)
+- Update dependencies
+  [#1127](https://github.com/fluxcd/source-controller/pull/1127)
+  [#1147](https://github.com/fluxcd/source-controller/pull/1147)
+- Update Cosign to v2.1.0
+  [#1132](https://github.com/fluxcd/source-controller/pull/1132)
+- Align `go.mod` version with Kubernetes (Go 1.20)
+  [#1134](https://github.com/fluxcd/source-controller/pull/1134)
+- Add the verification key to the GitRepository verified status condition
+- [#1136](https://github.com/fluxcd/source-controller/pull/1136)
+- gitrepo: remove obsolete proxy docs
+  [#1144](https://github.com/fluxcd/source-controller/pull/1144)
+
+## 1.0.0-rc.5
+
+**Release date:** 2023-06-01
+
+This release candidate fixes a regression introduced in `1.0.0.-rc.4` where
+support for Git servers that exclusively use v2 of the wire protocol like Azure
+Devops and AWS CodeCommit was broken.
+
+Lastly, the controller's dependencies were updated to mitigate CVE-2023-33199.
+
+Improvements:
+- build(deps): bump github.com/sigstore/rekor from 1.1.1 to 1.2.0
+  [#1107](https://github.com/fluxcd/source-controller/pull/1107)
+
+Fixes:
+-  Bump `fluxcd/pkg/git/gogit` to v0.12.0
+  [#1111](https://github.com/fluxcd/source-controller/pull/1111)
+
+## 1.0.0-rc.4
+
+**Release date:** 2023-05-26
+
+This release candidate comes with support for Kubernetes v1.27 and Cosign v2.
+It also enables the use of annotated Git tags with `.spec.ref.name` in
+`GitRepository`. Furthermore, it fixes a bug related to accessing Helm OCI
+charts on ACR using OIDC auth.
+
+Improvements:
+- build(deps): bump helm/kind-action from 1.5.0 to 1.7.0
+  [#1100](https://github.com/fluxcd/source-controller/pull/1100)
+- build(deps): bump sigstore/cosign-installer from 3.0.3 to 3.0.5
+  [#1101](https://github.com/fluxcd/source-controller/pull/1101)
+- build(deps): bump actions/setup-go from 4.0.0 to 4.0.1
+  [#1102](https://github.com/fluxcd/source-controller/pull/1102)
+- Update cosign to v2
+  [#1096](https://github.com/fluxcd/source-controller/pull/1096)
+- build(deps): bump github.com/sigstore/rekor from 0.12.1-0.20220915152154-4bb6f441c1b2 to 1.1.1
+  [#1083](https://github.com/fluxcd/source-controller/pull/1083)
+- Update controller-runtime and Kubernetes dependencies
+  [#1104](https://github.com/fluxcd/source-controller/pull/1104)
+- Update dependencies; switch to `go-git/go-git` and `pkg/tar`
+  [#1105](https://github.com/fluxcd/source-controller/pull/1105)
+
+## 1.0.0-rc.3
+
+**Release date:** 2023-05-12
+
+This release candidate introduces the verification of the Artifact digest in
+storage during reconciliation. This ensures that the Artifact is not tampered
+with after it was written to storage. When the digest does not match, the
+controller will emit a warning event and remove the file from storage, forcing
+the Artifact to be re-downloaded.
+
+In addition, files with executable permissions are now archived with their mode
+set to `0o744` instead of `0o644`. Allowing the extracted file to be executable
+by the user.
+
+Lastly, the controller's dependencies were updated to mitigate CVE-2023-1732
+and CVE-2023-2253, and the controller base image was updated to Alpine 3.18.
+
+Improvements:
+- Verify digest of Artifact in Storage
+  [#1088](https://github.com/fluxcd/source-controller/pull/1088)
+- build(deps): bump github.com/cloudflare/circl from 1.3.2 to 1.3.3
+  [#1092](https://github.com/fluxcd/source-controller/pull/1092)
+- build(deps): bump github.com/docker/distribution from 2.8.1+incompatible to 2.8.2+incompatible
+  [#1093](https://github.com/fluxcd/source-controller/pull/1093)
+- storage: set `0o744` for files with exec mode set
+  [#1094](https://github.com/fluxcd/source-controller/pull/1094)
+
+## 1.0.0-rc.2
+
+**Release date:** 2023-05-09
+
+This release candidate comes with various updates to the controller's dependencies,
+most notable, Helm was updated to v3.11.3.
+
+Improvements:
+- Update dependencies
+  [#1086](https://github.com/fluxcd/source-controller/pull/1086)
+- Set RecoverPanic globally across controllers
+  [#1077](https://github.com/fluxcd/source-controller/pull/1077)
+- Move controllers to internal/controller
+  [#1076](https://github.com/fluxcd/source-controller/pull/1076)
+
 ## 1.0.0-rc.1
 
 **Release date:** 2023-03-30

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"context"
@@ -28,11 +28,12 @@ import (
 
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/fluxcd/pkg/runtime/logger"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	kuberecorder "k8s.io/client-go/tools/record"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,6 +49,7 @@ import (
 	"github.com/fluxcd/pkg/git/repository"
 	"github.com/fluxcd/pkg/runtime/conditions"
 	helper "github.com/fluxcd/pkg/runtime/controller"
+	"github.com/fluxcd/pkg/runtime/jitter"
 	"github.com/fluxcd/pkg/runtime/patch"
 	"github.com/fluxcd/pkg/runtime/predicates"
 	rreconcile "github.com/fluxcd/pkg/runtime/reconcile"
@@ -134,7 +136,6 @@ type GitRepositoryReconciler struct {
 }
 
 type GitRepositoryReconcilerOptions struct {
-	MaxConcurrentReconciles   int
 	DependencyRequeueInterval time.Duration
 	RateLimiter               ratelimiter.RateLimiter
 }
@@ -156,15 +157,12 @@ func (r *GitRepositoryReconciler) SetupWithManagerAndOptions(mgr ctrl.Manager, o
 		r.features = features.FeatureGates()
 	}
 
-	recoverPanic := true
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&sourcev1.GitRepository{}, builder.WithPredicates(
 			predicate.Or(predicate.GenerationChangedPredicate{}, predicates.ReconcileRequestedPredicate{}),
 		)).
 		WithOptions(controller.Options{
-			MaxConcurrentReconciles: opts.MaxConcurrentReconciles,
-			RateLimiter:             opts.RateLimiter,
-			RecoverPanic:            &recoverPanic,
+			RateLimiter: opts.RateLimiter,
 		}).
 		Complete(r)
 }
@@ -178,9 +176,6 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-
-	// Record suspended status metric
-	r.RecordSuspend(ctx, obj, obj.Spec.Suspend)
 
 	// Initialize the patch helper with the current version of the object.
 	serialPatcher := patch.NewSerialPatcher(obj, r.Client)
@@ -202,27 +197,32 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				summarize.ErrorActionHandler,
 				summarize.RecordReconcileReq,
 			),
-			summarize.WithResultBuilder(sreconcile.AlwaysRequeueResultBuilder{RequeueAfter: obj.GetRequeueAfter()}),
+			summarize.WithResultBuilder(sreconcile.AlwaysRequeueResultBuilder{
+				RequeueAfter: jitter.JitteredIntervalDuration(obj.GetRequeueAfter()),
+			}),
 			summarize.WithPatchFieldOwner(r.ControllerName),
 		}
 		result, retErr = summarizeHelper.SummarizeAndPatch(ctx, obj, summarizeOpts...)
 
-		// Always record readiness and duration metrics
+		// Always record suspend, readiness and duration metrics.
+		r.Metrics.RecordSuspend(ctx, obj, obj.Spec.Suspend)
 		r.Metrics.RecordReadiness(ctx, obj)
 		r.Metrics.RecordDuration(ctx, obj, start)
 	}()
 
-	// Add finalizer first if not exist to avoid the race condition
-	// between init and delete
-	if !controllerutil.ContainsFinalizer(obj, sourcev1.SourceFinalizer) {
-		controllerutil.AddFinalizer(obj, sourcev1.SourceFinalizer)
-		recResult = sreconcile.ResultRequeue
+	// Examine if the object is under deletion.
+	if !obj.ObjectMeta.DeletionTimestamp.IsZero() {
+		recResult, retErr = r.reconcileDelete(ctx, obj)
 		return
 	}
 
-	// Examine if the object is under deletion
-	if !obj.ObjectMeta.DeletionTimestamp.IsZero() {
-		recResult, retErr = r.reconcileDelete(ctx, obj)
+	// Add finalizer first if not exist to avoid the race condition
+	// between init and delete.
+	// Note: Finalizers in general can only be added when the deletionTimestamp
+	// is not set.
+	if !controllerutil.ContainsFinalizer(obj, sourcev1.SourceFinalizer) {
+		controllerutil.AddFinalizer(obj, sourcev1.SourceFinalizer)
+		recResult = sreconcile.ResultRequeue
 		return
 	}
 
@@ -264,11 +264,11 @@ func (r *GitRepositoryReconciler) reconcile(ctx context.Context, sp *patch.Seria
 		rreconcile.ProgressiveStatus(false, obj, meta.ProgressingReason,
 			"processing object: new generation %d -> %d", obj.Status.ObservedGeneration, obj.Generation)
 		if err := sp.Patch(ctx, obj, r.patchOptions...); err != nil {
-			return sreconcile.ResultEmpty, err
+			return sreconcile.ResultEmpty, serror.NewGeneric(err, sourcev1.PatchOperationFailedReason)
 		}
 	case recAtVal != obj.Status.GetLastHandledReconcileRequest():
 		if err := sp.Patch(ctx, obj, r.patchOptions...); err != nil {
-			return sreconcile.ResultEmpty, err
+			return sreconcile.ResultEmpty, serror.NewGeneric(err, sourcev1.PatchOperationFailedReason)
 		}
 	}
 
@@ -366,7 +366,7 @@ func (r *GitRepositoryReconciler) shouldNotify(oldObj, newObj *sourcev1.GitRepos
 	if resErr != nil && res == sreconcile.ResultEmpty && newObj.Status.Artifact != nil {
 		// Convert to Generic error and check for ignore.
 		if ge, ok := resErr.(*serror.Generic); ok {
-			return ge.Ignore == true
+			return ge.Ignore
 		}
 	}
 	return false
@@ -389,13 +389,31 @@ func (r *GitRepositoryReconciler) reconcileStorage(ctx context.Context, sp *patc
 	// Garbage collect previous advertised artifact(s) from storage
 	_ = r.garbageCollect(ctx, obj)
 
-	// Determine if the advertised artifact is still in storage
 	var artifactMissing bool
-	if artifact := obj.GetArtifact(); artifact != nil && !r.Storage.ArtifactExist(*artifact) {
-		obj.Status.Artifact = nil
-		artifactMissing = true
-		// Remove the condition as the artifact doesn't exist.
-		conditions.Delete(obj, sourcev1.ArtifactInStorageCondition)
+	if artifact := obj.GetArtifact(); artifact != nil {
+		// Determine if the advertised artifact is still in storage
+		if !r.Storage.ArtifactExist(*artifact) {
+			artifactMissing = true
+		}
+
+		// If the artifact is in storage, verify if the advertised digest still
+		// matches the actual artifact
+		if !artifactMissing {
+			if err := r.Storage.VerifyArtifact(*artifact); err != nil {
+				r.Eventf(obj, corev1.EventTypeWarning, "ArtifactVerificationFailed", "failed to verify integrity of artifact: %s", err.Error())
+
+				if err = r.Storage.Remove(*artifact); err != nil {
+					return sreconcile.ResultEmpty, fmt.Errorf("failed to remove artifact after digest mismatch: %w", err)
+				}
+
+				artifactMissing = true
+			}
+		}
+
+		// If the artifact is missing, remove it from the object
+		if artifactMissing {
+			obj.Status.Artifact = nil
+		}
 	}
 
 	// Record that we do not have an artifact
@@ -407,7 +425,7 @@ func (r *GitRepositoryReconciler) reconcileStorage(ctx context.Context, sp *patc
 		rreconcile.ProgressiveStatus(true, obj, meta.ProgressingReason, msg)
 		conditions.Delete(obj, sourcev1.ArtifactInStorageCondition)
 		if err := sp.Patch(ctx, obj, r.patchOptions...); err != nil {
-			return sreconcile.ResultEmpty, err
+			return sreconcile.ResultEmpty, serror.NewGeneric(err, sourcev1.PatchOperationFailedReason)
 		}
 		return sreconcile.ResultSuccess, nil
 	}
@@ -459,24 +477,19 @@ func (r *GitRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 		conditions.Delete(obj, sourcev1.SourceVerifiedCondition)
 	}
 
-	var authData map[string][]byte
-	if obj.Spec.SecretRef != nil {
-		// Attempt to retrieve secret
-		name := types.NamespacedName{
-			Namespace: obj.GetNamespace(),
-			Name:      obj.Spec.SecretRef.Name,
-		}
-		var secret corev1.Secret
-		if err := r.Client.Get(ctx, name, &secret); err != nil {
+	var proxyOpts *transport.ProxyOptions
+	if obj.Spec.ProxySecretRef != nil {
+		var err error
+		proxyOpts, err = r.getProxyOpts(ctx, obj.Spec.ProxySecretRef.Name, obj.GetNamespace())
+		if err != nil {
 			e := serror.NewGeneric(
-				fmt.Errorf("failed to get secret '%s': %w", name.String(), err),
+				fmt.Errorf("failed to configure proxy options: %w", err),
 				sourcev1.AuthenticationFailedReason,
 			)
 			conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
 			// Return error as the world as observed may change
 			return sreconcile.ResultEmpty, e
 		}
-		authData = secret.Data
 	}
 
 	u, err := url.Parse(obj.Spec.URL)
@@ -489,14 +502,14 @@ func (r *GitRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 		return sreconcile.ResultEmpty, e
 	}
 
-	// Configure authentication strategy to access the source
-	authOpts, err := git.NewAuthOptions(*u, authData)
+	authOpts, err := r.getAuthOpts(ctx, obj, *u)
 	if err != nil {
 		e := serror.NewGeneric(
 			fmt.Errorf("failed to configure authentication options: %w", err),
 			sourcev1.AuthenticationFailedReason,
 		)
 		conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
+		// Return error as the world as observed may change
 		return sreconcile.ResultEmpty, e
 	}
 
@@ -508,13 +521,13 @@ func (r *GitRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 
 	// Observe if the artifacts still match the previous included ones
 	if artifacts.Diff(obj.Status.IncludedArtifacts) {
-		message := fmt.Sprintf("included artifacts differ from last observed includes")
+		message := "included artifacts differ from last observed includes"
 		if obj.Status.IncludedArtifacts != nil {
 			conditions.MarkTrue(obj, sourcev1.ArtifactOutdatedCondition, "IncludeChange", message)
 		}
 		rreconcile.ProgressiveStatus(true, obj, meta.ProgressingReason, "building artifact: %s", message)
 		if err := sp.Patch(ctx, obj, r.patchOptions...); err != nil {
-			return sreconcile.ResultEmpty, err
+			return sreconcile.ResultEmpty, serror.NewGeneric(err, sourcev1.PatchOperationFailedReason)
 		}
 	}
 	conditions.Delete(obj, sourcev1.ArtifactOutdatedCondition)
@@ -522,12 +535,7 @@ func (r *GitRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 	// Persist the ArtifactSet.
 	*includes = *artifacts
 
-	var optimizedClone bool
-	if val, ok := r.features[features.OptimizedGitClones]; ok && val {
-		optimizedClone = true
-	}
-
-	c, err := r.gitCheckout(ctx, obj, authOpts, dir, optimizedClone)
+	c, err := r.gitCheckout(ctx, obj, authOpts, proxyOpts, dir, true)
 	if err != nil {
 		return sreconcile.ResultEmpty, err
 	}
@@ -553,6 +561,8 @@ func (r *GitRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 			)
 			ge.Notification = false
 			ge.Ignore = true
+			// Log it as this will not be passed to the runtime.
+			ge.Log = true
 			ge.Event = corev1.EventTypeNormal
 			// Remove any stale fetch failed condition.
 			conditions.Delete(obj, sourcev1.FetchFailedCondition)
@@ -569,7 +579,7 @@ func (r *GitRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 
 		// If we can't skip the reconciliation, checkout again without any
 		// optimization.
-		c, err := r.gitCheckout(ctx, obj, authOpts, dir, false)
+		c, err := r.gitCheckout(ctx, obj, authOpts, proxyOpts, dir, false)
 		if err != nil {
 			return sreconcile.ResultEmpty, err
 		}
@@ -579,7 +589,7 @@ func (r *GitRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 	conditions.Delete(obj, sourcev1.FetchFailedCondition)
 
 	// Verify commit signature
-	if result, err := r.verifyCommitSignature(ctx, obj, *commit); err != nil || result == sreconcile.ResultEmpty {
+	if result, err := r.verifySignature(ctx, obj, *commit); err != nil || result == sreconcile.ResultEmpty {
 		return result, err
 	}
 
@@ -591,10 +601,64 @@ func (r *GitRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 		}
 		rreconcile.ProgressiveStatus(true, obj, meta.ProgressingReason, "building artifact: %s", message)
 		if err := sp.Patch(ctx, obj, r.patchOptions...); err != nil {
-			return sreconcile.ResultEmpty, err
+			return sreconcile.ResultEmpty, serror.NewGeneric(err, sourcev1.PatchOperationFailedReason)
 		}
 	}
 	return sreconcile.ResultSuccess, nil
+}
+
+// getProxyOpts fetches the secret containing the proxy settings, constructs a
+// transport.ProxyOptions object using those settings and then returns it.
+func (r *GitRepositoryReconciler) getProxyOpts(ctx context.Context, proxySecretName,
+	proxySecretNamespace string) (*transport.ProxyOptions, error) {
+	proxyData, err := r.getSecretData(ctx, proxySecretName, proxySecretNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get proxy secret '%s/%s': %w", proxySecretNamespace, proxySecretName, err)
+	}
+	address, ok := proxyData["address"]
+	if !ok {
+		return nil, fmt.Errorf("invalid proxy secret '%s/%s': key 'address' is missing", proxySecretNamespace, proxySecretName)
+	}
+
+	proxyOpts := &transport.ProxyOptions{
+		URL:      string(address),
+		Username: string(proxyData["username"]),
+		Password: string(proxyData["password"]),
+	}
+	return proxyOpts, nil
+}
+
+// getAuthOpts fetches the secret containing the auth options (if specified),
+// constructs a git.AuthOptions object using those options along with the provided
+// URL and returns it.
+func (r *GitRepositoryReconciler) getAuthOpts(ctx context.Context, obj *sourcev1.GitRepository, u url.URL) (*git.AuthOptions, error) {
+	var authData map[string][]byte
+	if obj.Spec.SecretRef != nil {
+		var err error
+		authData, err = r.getSecretData(ctx, obj.Spec.SecretRef.Name, obj.GetNamespace())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get secret '%s/%s': %w", obj.GetNamespace(), obj.Spec.SecretRef.Name, err)
+		}
+	}
+
+	// Configure authentication strategy to access the source
+	authOpts, err := git.NewAuthOptions(u, authData)
+	if err != nil {
+		return nil, err
+	}
+	return authOpts, nil
+}
+
+func (r *GitRepositoryReconciler) getSecretData(ctx context.Context, name, namespace string) (map[string][]byte, error) {
+	key := types.NamespacedName{
+		Namespace: namespace,
+		Name:      name,
+	}
+	var secret corev1.Secret
+	if err := r.Client.Get(ctx, key, &secret); err != nil {
+		return nil, err
+	}
+	return secret.Data, nil
 }
 
 // reconcileArtifact archives a new Artifact to the Storage, if the current
@@ -753,10 +817,10 @@ func (r *GitRepositoryReconciler) reconcileInclude(ctx context.Context, sp *patc
 
 		// Copy artifact (sub)contents to configured directory.
 		if err := r.Storage.CopyToPath(artifact, incl.GetFromPath(), toPath); err != nil {
-			e := &serror.Event{
-				Err:    fmt.Errorf("failed to copy '%s' include from %s to %s: %w", incl.GitRepositoryRef.Name, incl.GetFromPath(), incl.GetToPath(), err),
-				Reason: "CopyFailure",
-			}
+			e := serror.NewGeneric(
+				fmt.Errorf("failed to copy '%s' include from %s to %s: %w", incl.GitRepositoryRef.Name, incl.GetFromPath(), incl.GetToPath(), err),
+				"CopyFailure",
+			)
 			conditions.MarkTrue(obj, sourcev1.StorageOperationFailedCondition, e.Reason, e.Err.Error())
 			return sreconcile.ResultEmpty, e
 		}
@@ -767,11 +831,10 @@ func (r *GitRepositoryReconciler) reconcileInclude(ctx context.Context, sp *patc
 
 // gitCheckout builds checkout options with the given configurations and
 // performs a git checkout.
-func (r *GitRepositoryReconciler) gitCheckout(ctx context.Context,
-	obj *sourcev1.GitRepository, authOpts *git.AuthOptions, dir string,
-	optimized bool) (*git.Commit, error) {
+func (r *GitRepositoryReconciler) gitCheckout(ctx context.Context, obj *sourcev1.GitRepository,
+	authOpts *git.AuthOptions, proxyOpts *transport.ProxyOptions, dir string, optimized bool) (*git.Commit, error) {
 	// Configure checkout strategy.
-	cloneOpts := repository.CloneOptions{
+	cloneOpts := repository.CloneConfig{
 		RecurseSubmodules: obj.Spec.RecurseSubmodules,
 		ShallowClone:      true,
 	}
@@ -798,6 +861,9 @@ func (r *GitRepositoryReconciler) gitCheckout(ctx context.Context,
 	clientOpts := []gogit.ClientOption{gogit.WithDiskStorage()}
 	if authOpts.Transport == git.HTTP {
 		clientOpts = append(clientOpts, gogit.WithInsecureCredentialsOverHTTP())
+	}
+	if proxyOpts != nil {
+		clientOpts = append(clientOpts, gogit.WithProxy(*proxyOpts))
 	}
 
 	gitReader, err := gogit.NewClient(dir, authOpts, clientOpts...)
@@ -860,17 +926,18 @@ func (r *GitRepositoryReconciler) fetchIncludes(ctx context.Context, obj *source
 	return &artifacts, nil
 }
 
-// verifyCommitSignature verifies the signature of the given Git commit, if a
-// verification mode is specified on the object.
+// verifySignature verifies the signature of the given Git commit and/or its referencing tag
+// depending on the verification mode specified on the object.
 // If the signature can not be verified or the verification fails, it records
 // v1beta2.SourceVerifiedCondition=False and returns.
 // When successful, it records v1beta2.SourceVerifiedCondition=True.
 // If no verification mode is specified on the object, the
 // v1beta2.SourceVerifiedCondition Condition is removed.
-func (r *GitRepositoryReconciler) verifyCommitSignature(ctx context.Context, obj *sourcev1.GitRepository, commit git.Commit) (sreconcile.Result, error) {
+func (r *GitRepositoryReconciler) verifySignature(ctx context.Context, obj *sourcev1.GitRepository, commit git.Commit) (sreconcile.Result, error) {
 	// Check if there is a commit verification is configured and remove any old
 	// observations if there is none
 	if obj.Spec.Verification == nil || obj.Spec.Verification.Mode == "" {
+		obj.Status.SourceVerificationMode = nil
 		conditions.Delete(obj, sourcev1.SourceVerifiedCondition)
 		return sreconcile.ResultSuccess, nil
 	}
@@ -894,21 +961,74 @@ func (r *GitRepositoryReconciler) verifyCommitSignature(ctx context.Context, obj
 	for _, v := range secret.Data {
 		keyRings = append(keyRings, string(v))
 	}
-	// Verify commit with GPG data from secret
-	if _, err := commit.Verify(keyRings...); err != nil {
-		e := serror.NewGeneric(
-			fmt.Errorf("signature verification of commit '%s' failed: %w", commit.Hash.String(), err),
-			"InvalidCommitSignature",
-		)
-		conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, e.Reason, e.Err.Error())
-		// Return error in the hope the secret changes
-		return sreconcile.ResultEmpty, e
+
+	var message strings.Builder
+	if obj.Spec.Verification.VerifyTag() {
+		// If we need to verify a tag object, then the commit must have a tag
+		// that points to it. If it does not, then its safe to asssume that
+		// the checkout didn't happen via a tag reference, thus the object can
+		// be marked as stalled.
+		tag := commit.ReferencingTag
+		if tag == nil {
+			err := serror.NewStalling(
+				errors.New("cannot verify tag object's signature if a tag reference is not specified"),
+				"InvalidVerificationMode",
+			)
+			conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, err.Reason, err.Err.Error())
+			return sreconcile.ResultEmpty, err
+		}
+		if !git.IsSignedTag(*tag) {
+			// If the tag was not signed then we can't verify its signature
+			// but since the upstream tag object can change at any time, we can't
+			// mark the object as stalled.
+			err := serror.NewGeneric(
+				fmt.Errorf("cannot verify signature of tag '%s' since it is not signed", commit.ReferencingTag.String()),
+				"InvalidGitObject",
+			)
+			conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, err.Reason, err.Err.Error())
+			return sreconcile.ResultEmpty, err
+		}
+
+		// Verify tag with GPG data from secret
+		tagEntity, err := tag.Verify(keyRings...)
+		if err != nil {
+			e := serror.NewGeneric(
+				fmt.Errorf("signature verification of tag '%s' failed: %w", tag.String(), err),
+				"InvalidTagSignature",
+			)
+			conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, e.Reason, e.Err.Error())
+			// Return error in the hope the secret changes
+			return sreconcile.ResultEmpty, e
+		}
+
+		message.WriteString(fmt.Sprintf("verified signature of\n\t- tag '%s' with key '%s'", tag.String(), tagEntity))
 	}
 
-	conditions.MarkTrue(obj, sourcev1.SourceVerifiedCondition, meta.SucceededReason,
-		"verified signature of commit '%s'", commit.Hash.String())
-	r.eventLogf(ctx, obj, eventv1.EventTypeTrace, "VerifiedCommit",
-		"verified signature of commit '%s'", commit.Hash.String())
+	if obj.Spec.Verification.VerifyHEAD() {
+		// Verify commit with GPG data from secret
+		headEntity, err := commit.Verify(keyRings...)
+		if err != nil {
+			e := serror.NewGeneric(
+				fmt.Errorf("signature verification of commit '%s' failed: %w", commit.Hash.String(), err),
+				"InvalidCommitSignature",
+			)
+			conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, e.Reason, e.Err.Error())
+			// Return error in the hope the secret changes
+			return sreconcile.ResultEmpty, e
+		}
+		// If we also verified the tag previously, then append to the message.
+		if message.Len() > 0 {
+			message.WriteString(fmt.Sprintf("\n\t- commit '%s' with key '%s'", commit.Hash.String(), headEntity))
+		} else {
+			message.WriteString(fmt.Sprintf("verified signature of\n\t- commit '%s' with key '%s'", commit.Hash.String(), headEntity))
+		}
+	}
+
+	reason := meta.SucceededReason
+	mode := obj.Spec.Verification.GetMode()
+	obj.Status.SourceVerificationMode = &mode
+	conditions.MarkTrue(obj, sourcev1.SourceVerifiedCondition, reason, message.String())
+	r.eventLogf(ctx, obj, eventv1.EventTypeTrace, reason, message.String())
 	return sreconcile.ResultSuccess, nil
 }
 
@@ -983,15 +1103,19 @@ func (r *GitRepositoryReconciler) eventLogf(ctx context.Context, obj runtime.Obj
 
 // gitContentConfigChanged evaluates the current spec with the observations of
 // the artifact in the status to determine if artifact content configuration has
-// changed and requires rebuilding the artifact.
+// changed and requires rebuilding the artifact. Rebuilding the artifact is also
+// required if the object needs to be (re)verified.
 func gitContentConfigChanged(obj *sourcev1.GitRepository, includes *artifactSet) bool {
-	if !pointer.StringEqual(obj.Spec.Ignore, obj.Status.ObservedIgnore) {
+	if !ptr.Equal(obj.Spec.Ignore, obj.Status.ObservedIgnore) {
 		return true
 	}
 	if obj.Spec.RecurseSubmodules != obj.Status.ObservedRecurseSubmodules {
 		return true
 	}
 	if len(obj.Spec.Include) != len(obj.Status.ObservedInclude) {
+		return true
+	}
+	if requiresVerification(obj) {
 		return true
 	}
 
@@ -1047,4 +1171,29 @@ func commitReference(obj *sourcev1.GitRepository, commit *git.Commit) string {
 		return commit.AbsoluteReference()
 	}
 	return commit.String()
+}
+
+// requiresVerification inspects a GitRepository's verification spec and its status
+// to determine whether the Git repository needs to be verified again. It does so by
+// first checking if the GitRepository has a verification spec. If it does, then
+// it returns true based on the following three conditions:
+//
+//   - If the object does not have a observed verification mode in its status.
+//   - If the observed verification mode indicates that only the tag had been
+//     verified earlier and the HEAD also needs to be verified now.
+//   - If the observed verification mode indicates that only the HEAD had been
+//     verified earlier and the tag also needs to be verified now.
+func requiresVerification(obj *sourcev1.GitRepository) bool {
+	if obj.Spec.Verification != nil {
+		observedMode := obj.Status.SourceVerificationMode
+		mode := obj.Spec.Verification.GetMode()
+		if observedMode == nil {
+			return true
+		}
+		if (*observedMode == sourcev1.ModeGitTag && (mode == sourcev1.ModeGitHEAD || mode == sourcev1.ModeGitTagAndHEAD)) ||
+			(*observedMode == sourcev1.ModeGitHEAD && (mode == sourcev1.ModeGitTag || mode == sourcev1.ModeGitTagAndHEAD)) {
+			return true
+		}
+	}
+	return false
 }

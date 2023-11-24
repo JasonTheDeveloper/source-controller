@@ -5,9 +5,9 @@
 There are 2 [Helm repository types](#type) defined by the `HelmRepository` API:
 - Helm HTTP/S repository, which defines a Source to produce an Artifact for a Helm
 repository index YAML (`index.yaml`). 
-- OCI Helm repository, which defines a source that does not produce an Artifact. 
-Instead a validation of the Helm repository is performed and the outcome is reported in the
-`.status.conditions` field.
+- OCI Helm repository, which defines a source that does not produce an Artifact.
+  It's a data container to store the information about the OCI repository that
+  can be used by [HelmChart](helmcharts.md) to access OCI Helm charts.
 
 ## Examples
 
@@ -113,9 +113,11 @@ In the above example:
 
 - A HelmRepository named `podinfo` is created, indicated by the
   `.metadata.name` field.
-- The source-controller performs the Helm repository url validation i.e. the url 
-is a valid OCI registry url, every five minutes with the information indicated by the
-`.spec.interval` and `.spec.url` fields.
+- A HelmChart that refers to this HelmRepository uses the URL in the `.spec.url`
+  field to access the OCI Helm chart.
+
+**NOTE:** The `.spec.interval` field is only used by the `default` Helm
+repository and is ignored for any value in `oci` Helm repository.
 
 You can run this example by saving the manifest into `helmrepository.yaml`.
 
@@ -129,25 +131,12 @@ You can run this example by saving the manifest into `helmrepository.yaml`.
 
    ```console
    NAME      URL                                 AGE     READY   STATUS
-   podinfo   oci://ghcr.io/stefanprodan/charts   3m22s   True    Helm repository "podinfo" is ready
+   podinfo   oci://ghcr.io/stefanprodan/charts   3m22s
    ```
 
-3. Run `kubectl describe helmrepository podinfo` to see the [Conditions](#conditions) 
-in the HelmRepository's Status:
-
-   ```console
-   ...
-   Status:
-     Conditions:
-       Last Transition Time:  2022-05-12T14:02:12Z
-       Message:               Helm repository "podinfo" is ready
-       Observed Generation:   1
-       Reason:                Succeeded
-       Status:                True
-       Type:                  Ready
-     Observed Generation:     1
-   Events:                    <none>
-   ```
+Because the OCI Helm repository is a data container, there's nothing to report
+for `READY` and `STATUS` columns above. The existence of the object can be
+considered to be ready for use.
 
 ## Writing a HelmRepository spec
 
@@ -158,13 +147,11 @@ valid [DNS subdomain name](https://kubernetes.io/docs/concepts/overview/working-
 A HelmRepository also needs a
 [`.spec` section](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#spec-and-status).
 
-
 ### Type
 
 `.spec.type` is an optional field that specifies the Helm repository type. 
 
 Possible values are `default` for a Helm HTTP/S repository, or `oci` for an OCI Helm repository.
-
 
 ### Provider
 
@@ -224,14 +211,20 @@ to the IAM role when using IRSA.
 
 #### Azure
 
-The `azure` provider can be used to authenticate automatically using kubelet managed
-identity or Azure Active Directory pod-managed identity (aad-pod-identity), and 
+The `azure` provider can be used to authenticate automatically using Workload Identity, Kubelet Managed
+Identity or Azure Active Directory pod-managed identity (aad-pod-identity), and
 by extension gain access to ACR.
 
 ##### Kubelet Managed Identity
 
 When the kubelet managed identity has access to ACR, source-controller running on 
 it will also have access to ACR.
+
+**Note:** If you have more than one identity configured on the cluster, you have to specify which one to use
+by setting the `AZURE_CLIENT_ID` environment variable in the source-controller deployment.
+
+If you are running into further issues, please look at the
+[troubleshooting guide](https://github.com/Azure/azure-sdk-for-go/blob/main/sdk/azidentity/TROUBLESHOOTING.md#azure-virtual-machine-managed-identity).
 
 ##### Azure Workload Identity
 
@@ -270,13 +263,17 @@ patches:
               azure.workload.identity/use: "true"
 ```
 
-To use Workload Identity, you have to install the Workload Identity
-mutating webhook and create an identity that has access to ACR. Next, establish
+Ensure Workload Identity is properly set up on your cluster and the mutating webhook is installed.
+Create an identity that has access to ACR. Next, establish
 a federated identity between the source-controller ServiceAccount and the
-identity. Patch the source-controller Pod and ServiceAccount as shown in the patch
+identity. Patch the source-controller Deployment and ServiceAccount as shown in the patch
 above. Please take a look at this [guide](https://azure.github.io/azure-workload-identity/docs/quick-start.html#6-establish-federated-identity-credential-between-the-identity-and-the-service-account-issuer--subject).
 
-##### AAD Pod Identity
+##### Deprecated: AAD Pod Identity
+
+**Warning:** The AAD Pod Identity project will be archived in
+[September 2023](https://github.com/Azure/aad-pod-identity#-announcement),
+and you are advised to use Workload Identity instead.
 
 When using aad-pod-identity to enable access to ACR, add the following patch to
 your bootstrap repository, in the `flux-system/kustomization.yaml` file:
@@ -302,7 +299,7 @@ to give the `source-controller` pod access to the ACR. To do this, you have to i
 `aad-pod-identity` on your cluster, create a managed identity that has access to the
 container registry (this can also be the Kubelet identity if it has `AcrPull` role
 assignment on the ACR), create an `AzureIdentity` and `AzureIdentityBinding` that describe
-the managed identity and then label the `source-controller` pods with the name of the
+the managed identity and then label the `source-controller` deployment with the name of the
 AzureIdentity as shown in the patch above. Please take a look at [this guide](https://azure.github.io/aad-pod-identity/docs/)
 or [this one](https://docs.microsoft.com/en-us/azure/aks/use-azure-ad-pod-identity)
 if you want to use AKS pod-managed identities add-on that is in preview.
@@ -348,10 +345,23 @@ the needed permission is instead `storage.objects.list` which can be bound as pa
 of the Container Registry Service Agent role. Take a look at [this guide](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
 for more information about setting up GKE Workload Identity.
 
+### Insecure
+
+`.spec.insecure` is an optional field to allow connecting to an insecure (HTTP)
+container registry server, if set to `true`. The default value is `false`,
+denying insecure non-TLS connections when fetching Helm chart OCI artifacts.
+
+**Note**: The insecure field is supported only for Helm OCI repositories.
+The `spec.type` field must be set to `oci`.
+
 ### Interval
 
-`.spec.interval` is a required field that specifies the interval which the
-Helm repository index must be consulted at.
+**Note:** This field is ineffectual for [OCI Helm
+Repositories](#helm-oci-repository).
+
+`.spec.interval` is a an optional field that specifies the interval which the
+Helm repository index must be consulted at. When not set, the default value is
+`1m`.
 
 After successfully reconciling a HelmRepository object, the source-controller
 requeues the object for inspection after the specified interval. The value
@@ -360,6 +370,11 @@ e.g. `10m0s` to fetch the HelmRepository index YAML every 10 minutes.
 
 If the `.metadata.generation` of a resource changes (due to e.g. applying a
 change to the spec), this is handled instantly outside the interval window.
+
+**Note:** The controller can be configured to apply a jitter to the interval in
+order to distribute the load more evenly when multiple HelmRepository objects
+are set up with the same interval. For more information, please refer to the
+[source-controller configuration options](https://fluxcd.io/flux/components/source/options/).
 
 ### URL
 
@@ -372,11 +387,14 @@ For Helm repositories which require authentication, see [Secret reference](#secr
 
 ### Timeout
 
+**Note:** This field is not applicable to [OCI Helm
+Repositories](#helm-oci-repository).
+
 `.spec.timeout` is an optional field to specify a timeout for the fetch
 operation. The value must be in a
 [Go recognized duration string format](https://pkg.go.dev/time#ParseDuration),
-e.g. `1m30s` for a timeout of one minute and thirty seconds. The default value
-is `60s`.
+e.g. `1m30s` for a timeout of one minute and thirty seconds. When not set, the
+default value is `1m`.
 
 ### Secret reference
 
@@ -411,8 +429,8 @@ metadata:
   name: example-user
   namespace: default
 stringData:
-  username: example
-  password: 123456
+  username: "user-123456"
+  password: "pass-123456"
 ```
 
 OCI Helm repository example:
@@ -437,8 +455,8 @@ metadata:
   name: oci-creds
   namespace: default
 stringData:
-  username: example
-  password: 123456
+  username: "user-123456"
+  password: "pass-123456"
 ```
 
 For OCI Helm repositories, Kubernetes secrets of type [kubernetes.io/dockerconfigjson](https://kubernetes.io/docs/concepts/configuration/secret/#secret-types) are also supported.
@@ -452,15 +470,36 @@ flux create secret oci ghcr-auth \
   --password=${GITHUB_PAT}
 ```
 
-#### TLS authentication
+**Warning:** Support for specifying TLS authentication data using this API has been
+deprecated. Please use [`.spec.certSecretRef`](#cert-secret-reference) instead.
+If the controller uses the secret specified by this field to configure TLS, then
+a deprecation warning will be logged.
 
-**Note:** TLS authentication is not yet supported by OCI Helm repositories.
+### Cert secret reference
 
-To provide TLS credentials to use while connecting with the Helm repository,
-the referenced Secret is expected to contain `.data.certFile` and
-`.data.keyFile`, and/or `.data.caFile` values.
+`.spec.certSecretRef.name` is an optional field to specify a secret containing
+TLS certificate data. The secret can contain the following keys:
 
-For example:
+* `tls.crt` and `tls.key`, to specify the client certificate and private key used
+for TLS client authentication. These must be used in conjunction, i.e.
+specifying one without the other will lead to an error.
+* `ca.crt`, to specify the CA certificate used to verify the server, which is
+required if the server is using a self-signed certificate.
+
+If the server is using a self-signed certificate and has TLS client
+authentication enabled, all three values are required.
+
+The Secret should be of type `Opaque` or `kubernetes.io/tls`. All the files in
+the Secret are expected to be [PEM-encoded][pem-encoding]. Assuming you have
+three files; `client.key`, `client.crt` and `ca.crt` for the client private key,
+client certificate and the CA certificate respectively, you can generate the
+required Secret using the `flux create secret tls` command:
+
+```sh
+flux create secret tls --tls-key-file=client.key --tls-crt-file=client.crt --ca-crt-file=ca.crt
+```
+
+Example usage:
 
 ```yaml
 ---
@@ -472,7 +511,7 @@ metadata:
 spec:
   interval: 5m0s
   url: https://example.com
-  secretRef:
+  certSecretRef:
     name: example-tls
 ---
 apiVersion: v1
@@ -480,11 +519,12 @@ kind: Secret
 metadata:
   name: example-tls
   namespace: default
+type: kubernetes.io/tls # or Opaque
 data:
-  certFile: <BASE64>
-  keyFile: <BASE64>
+  tls.crt: <BASE64>
+  tls.key: <BASE64>
   # NOTE: Can be supplied without the above values
-  caFile: <BASE64>
+  ca.crt: <BASE64>
 ```
 
 ### Pass credentials
@@ -500,6 +540,9 @@ to HTTP/S Helm repositories.
 
 ### Suspend
 
+**Note:** This field is not applicable to [OCI Helm
+Repositories](#helm-oci-repository).
+
 `.spec.suspend` is an optional field to suspend the reconciliation of a
 HelmRepository. When set to `true`, the controller will stop reconciling the
 HelmRepository, and changes to the resource or the Helm repository index will
@@ -510,6 +553,10 @@ For practical information, see
 [suspending and resuming](#suspending-and-resuming).
 
 ## Working with HelmRepositories
+
+**Note:** This section does not apply to [OCI Helm
+Repositories](#helm-oci-repository), being a data container, once created, they
+are ready to used by [HelmCharts](helmcharts.md).
  
 ### Triggering a reconcile
 
@@ -611,6 +658,10 @@ flux resume source helm <repository-name>
 
 ### Debugging a HelmRepository
 
+**Note:** This section does not apply to [OCI Helm
+Repositories](#helm-oci-repository), being a data container, they are static
+objects that don't require debugging if valid.
+
 There are several ways to gather information about a HelmRepository for debugging
 purposes.
 
@@ -676,9 +727,11 @@ specific HelmRepository, e.g. `flux logs --level=error --kind=HelmRepository --n
 
 ## HelmRepository Status
 
-### Artifact
+**Note:** This section does not apply to [OCI Helm
+Repositories](#helm-oci-repository), they do not contain any information in the
+status.
 
-**Note:** This section does not apply to [OCI Helm Repositories](#oci-helm-repositories), they do not emit artifacts.
+### Artifact
 
 The HelmRepository reports the last fetched repository index as an Artifact
 object in the `.status.artifact` of the resource.
@@ -719,9 +772,6 @@ specification][kstatus-spec],
 and reports `Reconciling` and `Stalled` conditions where applicable to
 provide better (timeout) support to solutions polling the HelmRepository to become
 `Ready`.
-
- OCI Helm repositories use only `Reconciling`, `Ready`, `FetchFailed`, and `Stalled`
- condition types.
 
 #### Reconciling HelmRepository
 
@@ -859,5 +909,6 @@ annotation value it acted on in the `.status.lastHandledReconcileAt` field.
 For practical information about this field, see [triggering a
 reconcile](#triggering-a-reconcile).
 
+[pem-encoding]: https://en.wikipedia.org/wiki/Privacy-Enhanced_Mail
 [typical-status-properties]: https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
 [kstatus-spec]: https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus

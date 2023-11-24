@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -65,11 +66,18 @@ type OCIChartRepository struct {
 
 	// RegistryClient is a client to use while downloading tags or charts from a registry.
 	RegistryClient RegistryClient
+
 	// credentialsFile is a temporary credentials file to use while downloading tags or charts from a registry.
 	credentialsFile string
 
+	// certificatesStore is a temporary store to use while downloading tags or charts from a registry.
+	certificatesStore string
+
 	// verifiers is a list of verifiers to use when verifying a chart.
 	verifiers []oci.Verifier
+
+	// insecureHTTP indicates that the chart is hosted on an insecure registry.
+	insecure bool
 }
 
 // OCIChartRepositoryOption is a function that can be passed to NewOCIChartRepository
@@ -80,6 +88,13 @@ type OCIChartRepositoryOption func(*OCIChartRepository) error
 func WithVerifiers(verifiers []oci.Verifier) OCIChartRepositoryOption {
 	return func(r *OCIChartRepository) error {
 		r.verifiers = verifiers
+		return nil
+	}
+}
+
+func WithInsecureHTTP() OCIChartRepositoryOption {
+	return func(r *OCIChartRepository) error {
+		r.insecure = true
 		return nil
 	}
 }
@@ -116,6 +131,14 @@ func WithOCIGetterOptions(getterOpts []getter.Option) OCIChartRepositoryOption {
 func WithCredentialsFile(credentialsFile string) OCIChartRepositoryOption {
 	return func(r *OCIChartRepository) error {
 		r.credentialsFile = credentialsFile
+		return nil
+	}
+}
+
+// WithCertificatesStore returns a ChartRepositoryOption that will set the certificates store
+func WithCertificatesStore(store string) OCIChartRepositoryOption {
+	return func(r *OCIChartRepository) error {
+		r.certificatesStore = store
 		return nil
 	}
 }
@@ -265,14 +288,24 @@ func (r *OCIChartRepository) HasCredentials() bool {
 
 // Clear deletes the OCI registry credentials file.
 func (r *OCIChartRepository) Clear() error {
+	var errs error
 	// clean the credentials file if it exists
 	if r.credentialsFile != "" {
 		if err := os.Remove(r.credentialsFile); err != nil {
-			return err
+			errs = errors.Join(errs, err)
 		}
 	}
 	r.credentialsFile = ""
-	return nil
+
+	// clean the certificates store if it exists
+	if r.certificatesStore != "" {
+		if err := os.RemoveAll(r.certificatesStore); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+	r.certificatesStore = ""
+
+	return errs
 }
 
 // getLastMatchingVersionOrConstraint returns the last version that matches the given version string.
@@ -335,7 +368,12 @@ func (r *OCIChartRepository) VerifyChart(ctx context.Context, chart *repo.ChartV
 		return fmt.Errorf("chart '%s' has no downloadable URLs", chart.Name)
 	}
 
-	ref, err := name.ParseReference(strings.TrimPrefix(chart.URLs[0], fmt.Sprintf("%s://", registry.OCIScheme)))
+	var nameOpts []name.Option
+	if r.insecure {
+		nameOpts = append(nameOpts, name.Insecure)
+	}
+
+	ref, err := name.ParseReference(strings.TrimPrefix(chart.URLs[0], fmt.Sprintf("%s://", registry.OCIScheme)), nameOpts...)
 	if err != nil {
 		return fmt.Errorf("invalid chart reference: %s", err)
 	}

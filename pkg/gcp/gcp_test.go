@@ -103,6 +103,7 @@ func TestMain(m *testing.M) {
 			}
 		case fmt.Sprintf("/storage/v1/b/%s/o?alt=json&delimiter=&endOffset=&pageToken=&prefix=&prettyPrint=false&projection=full&startOffset=&versions=false", bucketName):
 		case fmt.Sprintf("/storage/v1/b/%s/o?alt=json&delimiter=&endOffset=&includeTrailingDelimiter=false&pageToken=&prefix=&prettyPrint=false&projection=full&startOffset=&versions=false", bucketName):
+		case fmt.Sprintf("/storage/v1/b/%s/o?alt=json&delimiter=&endOffset=&includeTrailingDelimiter=false&matchGlob=&pageToken=&prefix=&prettyPrint=false&projection=full&startOffset=&versions=false", bucketName):
 			w.WriteHeader(200)
 			response := &raw.Objects{}
 			response.Items = append(response.Items, getObject())
@@ -169,7 +170,7 @@ func TestVisitObjects(t *testing.T) {
 	}
 	keys := []string{}
 	etags := []string{}
-	err := gcpClient.VisitObjects(context.Background(), bucketName, func(key, etag string) error {
+	err := gcpClient.VisitObjects(context.Background(), bucketName, "", func(key, etag string) error {
 		keys = append(keys, key)
 		etags = append(etags, etag)
 		return nil
@@ -184,7 +185,7 @@ func TestVisitObjectsErr(t *testing.T) {
 		Client: client,
 	}
 	badBucketName := "bad-bucket"
-	err := gcpClient.VisitObjects(context.Background(), badBucketName, func(key, etag string) error {
+	err := gcpClient.VisitObjects(context.Background(), badBucketName, "", func(key, etag string) error {
 		return nil
 	})
 	assert.Error(t, err, fmt.Sprintf("listing objects from bucket '%s' failed: storage: bucket doesn't exist", badBucketName))
@@ -195,7 +196,7 @@ func TestVisitObjectsCallbackErr(t *testing.T) {
 		Client: client,
 	}
 	mockErr := fmt.Errorf("mock")
-	err := gcpClient.VisitObjects(context.Background(), bucketName, func(key, etag string) error {
+	err := gcpClient.VisitObjects(context.Background(), bucketName, "", func(key, etag string) error {
 		return mockErr
 	})
 	assert.Error(t, err, mockErr.Error())

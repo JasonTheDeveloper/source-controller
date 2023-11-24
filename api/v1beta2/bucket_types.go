@@ -23,6 +23,7 @@ import (
 
 	"github.com/fluxcd/pkg/apis/acl"
 	"github.com/fluxcd/pkg/apis/meta"
+
 	apiv1 "github.com/fluxcd/source-controller/api/v1"
 )
 
@@ -73,12 +74,18 @@ type BucketSpec struct {
 	// +optional
 	Region string `json:"region,omitempty"`
 
+	// Prefix to use for server-side filtering of files in the Bucket.
+	// +optional
+	Prefix string `json:"prefix,omitempty"`
+
 	// SecretRef specifies the Secret containing authentication credentials
 	// for the Bucket.
 	// +optional
 	SecretRef *meta.LocalObjectReference `json:"secretRef,omitempty"`
 
-	// Interval at which to check the Endpoint for updates.
+	// Interval at which the Bucket Endpoint is checked for updates.
+	// This interval is approximate and may be subject to jitter to ensure
+	// efficient use of resources.
 	// +kubebuilder:validation:Type=string
 	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$"
 	// +required

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"archive/tar"
@@ -31,15 +31,16 @@ import (
 	"time"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
-	"github.com/fluxcd/go-git/v5/plumbing/format/gitignore"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
+	"github.com/opencontainers/go-digest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"github.com/fluxcd/pkg/lockedfile"
 	"github.com/fluxcd/pkg/sourceignore"
-	"github.com/fluxcd/pkg/untar"
+	pkgtar "github.com/fluxcd/pkg/tar"
 
-	"github.com/fluxcd/source-controller/api/v1"
+	v1 "github.com/fluxcd/source-controller/api/v1"
 	intdigest "github.com/fluxcd/source-controller/internal/digest"
 	sourcefs "github.com/fluxcd/source-controller/internal/fs"
 )
@@ -47,10 +48,12 @@ import (
 const GarbageCountLimit = 1000
 
 const (
-	// defaultFileMode is the permission mode applied to all files inside an artifact archive.
-	defaultFileMode int64 = 0o644
+	// defaultFileMode is the permission mode applied to files inside an artifact archive.
+	defaultFileMode int64 = 0o600
 	// defaultDirMode is the permission mode applied to all directories inside an artifact archive.
-	defaultDirMode int64 = 0o755
+	defaultDirMode int64 = 0o750
+	// defaultExeFileMode is the permission mode applied to executable files inside an artifact archive.
+	defaultExeFileMode int64 = 0o700
 )
 
 // Storage manages artifacts
@@ -84,7 +87,7 @@ func NewStorage(basePath string, hostname string, artifactRetentionTTL time.Dura
 }
 
 // NewArtifactFor returns a new v1.Artifact.
-func (s *Storage) NewArtifactFor(kind string, metadata metav1.Object, revision, fileName string) v1.Artifact {
+func (s Storage) NewArtifactFor(kind string, metadata metav1.Object, revision, fileName string) v1.Artifact {
 	path := v1.ArtifactPath(kind, metadata.GetNamespace(), metadata.GetName(), fileName)
 	artifact := v1.Artifact{
 		Path:     path,
@@ -117,13 +120,18 @@ func (s Storage) SetHostname(URL string) string {
 }
 
 // MkdirAll calls os.MkdirAll for the given v1.Artifact base dir.
-func (s *Storage) MkdirAll(artifact v1.Artifact) error {
+func (s Storage) MkdirAll(artifact v1.Artifact) error {
 	dir := filepath.Dir(s.LocalPath(artifact))
 	return os.MkdirAll(dir, 0o700)
 }
 
+// Remove calls os.Remove for the given v1.Artifact path.
+func (s Storage) Remove(artifact v1.Artifact) error {
+	return os.Remove(s.LocalPath(artifact))
+}
+
 // RemoveAll calls os.RemoveAll for the given v1.Artifact base dir.
-func (s *Storage) RemoveAll(artifact v1.Artifact) (string, error) {
+func (s Storage) RemoveAll(artifact v1.Artifact) (string, error) {
 	var deletedDir string
 	dir := filepath.Dir(s.LocalPath(artifact))
 	// Check if the dir exists.
@@ -135,7 +143,7 @@ func (s *Storage) RemoveAll(artifact v1.Artifact) (string, error) {
 }
 
 // RemoveAllButCurrent removes all files for the given v1.Artifact base dir, excluding the current one.
-func (s *Storage) RemoveAllButCurrent(artifact v1.Artifact) ([]string, error) {
+func (s Storage) RemoveAllButCurrent(artifact v1.Artifact) ([]string, error) {
 	deletedFiles := []string{}
 	localPath := s.LocalPath(artifact)
 	dir := filepath.Dir(localPath)
@@ -168,7 +176,7 @@ func (s *Storage) RemoveAllButCurrent(artifact v1.Artifact) ([]string, error) {
 // 1. collect all artifact files with an expired ttl
 // 2. if we satisfy maxItemsToBeRetained, then return
 // 3. else, collect all artifact files till the latest n files remain, where n=maxItemsToBeRetained
-func (s *Storage) getGarbageFiles(artifact v1.Artifact, totalCountLimit, maxItemsToBeRetained int, ttl time.Duration) (garbageFiles []string, _ error) {
+func (s Storage) getGarbageFiles(artifact v1.Artifact, totalCountLimit, maxItemsToBeRetained int, ttl time.Duration) (garbageFiles []string, _ error) {
 	localPath := s.LocalPath(artifact)
 	dir := filepath.Dir(localPath)
 	artifactFilesWithCreatedTs := make(map[time.Time]string)
@@ -255,7 +263,7 @@ func (s *Storage) getGarbageFiles(artifact v1.Artifact, totalCountLimit, maxItem
 
 // GarbageCollect removes all garbage files in the artifact dir according to the provided
 // retention options.
-func (s *Storage) GarbageCollect(ctx context.Context, artifact v1.Artifact, timeout time.Duration) ([]string, error) {
+func (s Storage) GarbageCollect(ctx context.Context, artifact v1.Artifact, timeout time.Duration) ([]string, error) {
 	delFilesChan := make(chan []string)
 	errChan := make(chan error)
 	// Abort if it takes more than the provided timeout duration.
@@ -317,12 +325,41 @@ func stringInSlice(a string, list []string) bool {
 }
 
 // ArtifactExist returns a boolean indicating whether the v1.Artifact exists in storage and is a regular file.
-func (s *Storage) ArtifactExist(artifact v1.Artifact) bool {
+func (s Storage) ArtifactExist(artifact v1.Artifact) bool {
 	fi, err := os.Lstat(s.LocalPath(artifact))
 	if err != nil {
 		return false
 	}
 	return fi.Mode().IsRegular()
+}
+
+// VerifyArtifact verifies if the Digest of the v1.Artifact matches the digest
+// of the file in Storage. It returns an error if the digests don't match, or
+// if it can't be verified.
+func (s Storage) VerifyArtifact(artifact v1.Artifact) error {
+	if artifact.Digest == "" {
+		return fmt.Errorf("artifact has no digest")
+	}
+
+	d, err := digest.Parse(artifact.Digest)
+	if err != nil {
+		return fmt.Errorf("failed to parse artifact digest '%s': %w", artifact.Digest, err)
+	}
+
+	f, err := os.Open(s.LocalPath(artifact))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	verifier := d.Verifier()
+	if _, err = io.Copy(verifier, f); err != nil {
+		return err
+	}
+	if !verifier.Verified() {
+		return fmt.Errorf("computed digest doesn't match '%s'", d.String())
+	}
+	return nil
 }
 
 // ArchiveFileFilter must return true if a file should not be included in the archive after inspecting the given path
@@ -347,7 +384,7 @@ func SourceIgnoreFilter(ps []gitignore.Pattern, domain []string) ArchiveFileFilt
 // directories and any ArchiveFileFilter matches. While archiving, any environment specific data (for example,
 // the user and group name) is stripped from file headers.
 // If successful, it sets the digest and last update time on the artifact.
-func (s *Storage) Archive(artifact *v1.Artifact, dir string, filter ArchiveFileFilter) (err error) {
+func (s Storage) Archive(artifact *v1.Artifact, dir string, filter ArchiveFileFilter) (err error) {
 	if f, err := os.Stat(dir); os.IsNotExist(err) || !f.IsDir() {
 		return fmt.Errorf("invalid dir path: %s", dir)
 	}
@@ -389,6 +426,7 @@ func (s *Storage) Archive(artifact *v1.Artifact, dir string, filter ArchiveFileF
 		if err != nil {
 			return err
 		}
+
 		// The name needs to be modified to maintain directory structure
 		// as tar.FileInfoHeader only has access to the base name of the file.
 		// Ref: https://golang.org/src/archive/tar/common.go?#L626
@@ -399,21 +437,7 @@ func (s *Storage) Archive(artifact *v1.Artifact, dir string, filter ArchiveFileF
 				return err
 			}
 		}
-		header.Name = relFilePath
-
-		// We want to remove any environment specific data as well, this
-		// ensures the checksum is purely content based.
-		header.Gid = 0
-		header.Uid = 0
-		header.Uname = ""
-		header.Gname = ""
-		header.ModTime = time.Time{}
-		header.AccessTime = time.Time{}
-		header.ChangeTime = time.Time{}
-		header.Mode = defaultFileMode
-		if fi.Mode().IsDir() {
-			header.Mode = defaultDirMode
-		}
+		sanitizeHeader(relFilePath, header)
 
 		if err := tw.WriteHeader(header); err != nil {
 			return err
@@ -469,7 +493,7 @@ func (s *Storage) Archive(artifact *v1.Artifact, dir string, filter ArchiveFileF
 
 // AtomicWriteFile atomically writes the io.Reader contents to the v1.Artifact path.
 // If successful, it sets the digest and last update time on the artifact.
-func (s *Storage) AtomicWriteFile(artifact *v1.Artifact, reader io.Reader, mode os.FileMode) (err error) {
+func (s Storage) AtomicWriteFile(artifact *v1.Artifact, reader io.Reader, mode os.FileMode) (err error) {
 	localPath := s.LocalPath(*artifact)
 	tf, err := os.CreateTemp(filepath.Split(localPath))
 	if err != nil {
@@ -511,7 +535,7 @@ func (s *Storage) AtomicWriteFile(artifact *v1.Artifact, reader io.Reader, mode 
 
 // Copy atomically copies the io.Reader contents to the v1.Artifact path.
 // If successful, it sets the digest and last update time on the artifact.
-func (s *Storage) Copy(artifact *v1.Artifact, reader io.Reader) (err error) {
+func (s Storage) Copy(artifact *v1.Artifact, reader io.Reader) (err error) {
 	localPath := s.LocalPath(*artifact)
 	tf, err := os.CreateTemp(filepath.Split(localPath))
 	if err != nil {
@@ -549,7 +573,7 @@ func (s *Storage) Copy(artifact *v1.Artifact, reader io.Reader) (err error) {
 
 // CopyFromPath atomically copies the contents of the given path to the path of the v1.Artifact.
 // If successful, the digest and last update time on the artifact is set.
-func (s *Storage) CopyFromPath(artifact *v1.Artifact, path string) (err error) {
+func (s Storage) CopyFromPath(artifact *v1.Artifact, path string) (err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -564,7 +588,7 @@ func (s *Storage) CopyFromPath(artifact *v1.Artifact, path string) (err error) {
 }
 
 // CopyToPath copies the contents in the (sub)path of the given artifact to the given path.
-func (s *Storage) CopyToPath(artifact *v1.Artifact, subPath, toPath string) error {
+func (s Storage) CopyToPath(artifact *v1.Artifact, subPath, toPath string) error {
 	// create a tmp directory to store artifact
 	tmp, err := os.MkdirTemp("", "flux-include-")
 	if err != nil {
@@ -582,7 +606,7 @@ func (s *Storage) CopyToPath(artifact *v1.Artifact, subPath, toPath string) erro
 
 	// untar the artifact
 	untarPath := filepath.Join(tmp, "unpack")
-	if _, err = untar.Untar(f, untarPath); err != nil {
+	if err = pkgtar.Untar(f, untarPath, pkgtar.WithMaxUntarSize(-1)); err != nil {
 		return err
 	}
 
@@ -603,7 +627,7 @@ func (s *Storage) CopyToPath(artifact *v1.Artifact, subPath, toPath string) erro
 }
 
 // Symlink creates or updates a symbolic link for the given v1.Artifact and returns the URL for the symlink.
-func (s *Storage) Symlink(artifact v1.Artifact, linkName string) (string, error) {
+func (s Storage) Symlink(artifact v1.Artifact, linkName string) (string, error) {
 	localPath := s.LocalPath(artifact)
 	dir := filepath.Dir(localPath)
 	link := filepath.Join(dir, linkName)
@@ -625,14 +649,14 @@ func (s *Storage) Symlink(artifact v1.Artifact, linkName string) (string, error)
 }
 
 // Lock creates a file lock for the given v1.Artifact.
-func (s *Storage) Lock(artifact v1.Artifact) (unlock func(), err error) {
+func (s Storage) Lock(artifact v1.Artifact) (unlock func(), err error) {
 	lockFile := s.LocalPath(artifact) + ".lock"
 	mutex := lockedfile.MutexAt(lockFile)
 	return mutex.Lock()
 }
 
 // LocalPath returns the secure local path of the given artifact (that is: relative to the Storage.BasePath).
-func (s *Storage) LocalPath(artifact v1.Artifact) string {
+func (s Storage) LocalPath(artifact v1.Artifact) string {
 	if artifact.Path == "" {
 		return ""
 	}
@@ -653,4 +677,43 @@ func (wc *writeCounter) Write(p []byte) (int, error) {
 	n := len(p)
 	wc.written += int64(n)
 	return n, nil
+}
+
+// sanitizeHeader modifies the tar.Header to be relative to the root of the
+// archive and removes any environment specific data.
+func sanitizeHeader(relP string, h *tar.Header) {
+	// Modify the name to be relative to the root of the archive,
+	// this ensures we maintain the same structure when extracting.
+	h.Name = relP
+
+	// We want to remove any environment specific data as well, this
+	// ensures the checksum is purely content based.
+	h.Gid = 0
+	h.Uid = 0
+	h.Uname = ""
+	h.Gname = ""
+	h.ModTime = time.Time{}
+	h.AccessTime = time.Time{}
+	h.ChangeTime = time.Time{}
+
+	// Override the mode to be the default for the type of file.
+	setDefaultMode(h)
+}
+
+// setDefaultMode sets the default mode for the given header.
+func setDefaultMode(h *tar.Header) {
+	if h.FileInfo().IsDir() {
+		h.Mode = defaultDirMode
+		return
+	}
+
+	if h.FileInfo().Mode().IsRegular() {
+		mode := h.FileInfo().Mode()
+		if mode&os.ModeType == 0 && mode&0o111 != 0 {
+			h.Mode = defaultExeFileMode
+			return
+		}
+		h.Mode = defaultFileMode
+		return
+	}
 }

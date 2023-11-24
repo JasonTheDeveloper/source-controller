@@ -1,6 +1,6 @@
 ARG BASE_VARIANT=alpine
-ARG GO_VERSION=1.20
-ARG XX_VERSION=1.2.1
+ARG GO_VERSION=1.21
+ARG XX_VERSION=1.3.0
 
 FROM --platform=$BUILDPLATFORM tonistiigi/xx:${XX_VERSION} AS xx
 
@@ -40,7 +40,6 @@ RUN go mod download
 
 # Copy source code
 COPY main.go main.go
-COPY controllers/ controllers/
 COPY pkg/ pkg/
 COPY internal/ internal/
 
@@ -61,7 +60,7 @@ RUN export CGO_LDFLAGS="-static -fuse-ld=lld" && \
 # Ensure that the binary was cross-compiled correctly to the target platform.
 RUN xx-verify --static /source-controller
 
-FROM alpine:3.17
+FROM alpine:3.18
 
 ARG TARGETPLATFORM
 RUN apk --no-cache add ca-certificates \

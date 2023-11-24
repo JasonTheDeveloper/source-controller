@@ -38,6 +38,31 @@ const (
 	IncludeUnavailableCondition string = "IncludeUnavailable"
 )
 
+// GitVerificationMode specifies the verification mode for a Git repository.
+type GitVerificationMode string
+
+// Valid checks the validity of the Git verification mode.
+func (m GitVerificationMode) Valid() bool {
+	switch m {
+	case ModeGitHEAD, ModeGitTag, ModeGitTagAndHEAD:
+		return true
+	default:
+		return false
+	}
+}
+
+const (
+	// ModeGitHEAD implies that the HEAD of the Git repository (after it has been
+	// checked out to the required commit) should be verified.
+	ModeGitHEAD GitVerificationMode = "HEAD"
+	// ModeGitTag implies that the tag object specified in the checkout configuration
+	// should be verified.
+	ModeGitTag GitVerificationMode = "Tag"
+	// ModeGitTagAndHEAD implies that both the tag object and the commit it points
+	// to should be verified.
+	ModeGitTagAndHEAD GitVerificationMode = "TagAndHEAD"
+)
+
 // GitRepositorySpec specifies the required configuration to produce an
 // Artifact for a Git repository.
 type GitRepositorySpec struct {
@@ -55,7 +80,9 @@ type GitRepositorySpec struct {
 	// +optional
 	SecretRef *meta.LocalObjectReference `json:"secretRef,omitempty"`
 
-	// Interval at which to check the GitRepository for updates.
+	// Interval at which the GitRepository URL is checked for updates.
+	// This interval is approximate and may be subject to jitter to ensure
+	// efficient use of resources.
 	// +kubebuilder:validation:Type=string
 	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$"
 	// +required
@@ -77,6 +104,11 @@ type GitRepositorySpec struct {
 	// signature(s).
 	// +optional
 	Verification *GitRepositoryVerification `json:"verify,omitempty"`
+
+	// ProxySecretRef specifies the Secret containing the proxy configuration
+	// to use while communicating with the Git server.
+	// +optional
+	ProxySecretRef *meta.LocalObjectReference `json:"proxySecretRef,omitempty"`
 
 	// Ignore overrides the set of excluded patterns in the .sourceignore format
 	// (which is the same as .gitignore). If not provided, a default will be used,
@@ -165,9 +197,15 @@ type GitRepositoryRef struct {
 // GitRepositoryVerification specifies the Git commit signature verification
 // strategy.
 type GitRepositoryVerification struct {
-	// Mode specifies what Git object should be verified, currently ('head').
-	// +kubebuilder:validation:Enum=head
-	Mode string `json:"mode"`
+	// Mode specifies which Git object(s) should be verified.
+	//
+	// The variants "head" and "HEAD" both imply the same thing, i.e. verify
+	// the commit that the HEAD of the Git repository points to. The variant
+	// "head" solely exists to ensure backwards compatibility.
+	// +kubebuilder:validation:Enum=head;HEAD;Tag;TagAndHEAD
+	// +optional
+	// +kubebuilder:default:=HEAD
+	Mode GitVerificationMode `json:"mode,omitempty"`
 
 	// SecretRef specifies the Secret containing the public keys of trusted Git
 	// authors.
@@ -210,6 +248,11 @@ type GitRepositoryStatus struct {
 	// +optional
 	ObservedInclude []GitRepositoryInclude `json:"observedInclude,omitempty"`
 
+	// SourceVerificationMode is the last used verification mode indicating
+	// which Git object(s) have been verified.
+	// +optional
+	SourceVerificationMode *GitVerificationMode `json:"sourceVerificationMode,omitempty"`
+
 	meta.ReconcileRequestStatus `json:",inline"`
 }
 
@@ -243,6 +286,26 @@ func (in GitRepository) GetRequeueAfter() time.Duration {
 // the status sub-resource.
 func (in *GitRepository) GetArtifact() *Artifact {
 	return in.Status.Artifact
+}
+
+// GetMode returns the declared GitVerificationMode, or a ModeGitHEAD default.
+func (v *GitRepositoryVerification) GetMode() GitVerificationMode {
+	if v.Mode.Valid() {
+		return v.Mode
+	}
+	return ModeGitHEAD
+}
+
+// VerifyHEAD returns if the configured mode instructs verification of the
+// Git HEAD.
+func (v *GitRepositoryVerification) VerifyHEAD() bool {
+	return v.GetMode() == ModeGitHEAD || v.GetMode() == ModeGitTagAndHEAD
+}
+
+// VerifyTag returns if the configured mode instructs verification of the
+// Git tag.
+func (v *GitRepositoryVerification) VerifyTag() bool {
+	return v.GetMode() == ModeGitTag || v.GetMode() == ModeGitTagAndHEAD
 }
 
 // +genclient
