@@ -218,3 +218,7 @@ fuzz-native:
 	KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) \
 	FUZZ_TIME=$(FUZZ_TIME) \
 		./tests/fuzz/native_go_run.sh
+
+cluster:
+	-k3d registry create flux-registry --port 58034
+	k3d cluster create flux --registry-use k3d-flux-registry:58034 --wait

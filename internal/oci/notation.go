@@ -150,7 +150,7 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 		repoUrl = fmt.Sprintf("%s@%s", s[0], d)
 	}
 
-	verififyOptions := notation.RemoteVerifyOptions{
+	verififyOptions := notation.VerifyOptions{
 		ArtifactReference:    repoUrl,
 		MaxSignatureAttempts: 50,
 	}
