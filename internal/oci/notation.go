@@ -3,7 +3,6 @@ package oci
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -30,10 +29,18 @@ type notationOptions struct {
 	TrustStore *trustpolicy.Document
 	Keychain   authn.Keychain
 	ROpt       []remote.Option
+	Insecure   bool
 }
 
 // NotationOptions is a function that configures the options applied to a notation verifier
 type NotationOptions func(opts *notationOptions)
+
+// WithInsecureRegistry sets notation to verify against insecure registry.
+func WithInsecureRegistry(insecure bool) NotationOptions {
+	return func(opts *notationOptions) {
+		opts.Insecure = insecure
+	}
+}
 
 // WithTrustStore sets the trust store configuration.
 func WithTrustStore(trustStore *trustpolicy.Document) NotationOptions {
@@ -70,6 +77,7 @@ type NotaryVerifier struct {
 	auth     authn.Keychain
 	verifier *notation.Verifier
 	opts     []remote.Option
+	insecure bool
 }
 
 // NewNotaryVerifier initializes a new NotaryVerifier
@@ -99,6 +107,7 @@ func NewNotaryVerifier(opts ...NotationOptions) (*NotaryVerifier, error) {
 		auth:     o.Keychain,
 		verifier: &verifier,
 		opts:     o.ROpt,
+		insecure: o.Insecure,
 	}, nil
 }
 
@@ -111,6 +120,8 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 	if err != nil {
 		return false, err
 	}
+	remoteRepo.PlainHTTP = v.insecure
+
 	repo := registry.NewRepository(remoteRepo)
 
 	ss := stringResource{url}
@@ -141,13 +152,15 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 
 	i, err := remote.Image(ref, v.opts...)
 
-	log.Println(i.ConfigFile())
 	d, err := i.Digest()
 
 	repoUrl := ""
 
-	if s := strings.Split(url, ":"); len(s) == 2 && !strings.Contains(url, "@") {
-		repoUrl = fmt.Sprintf("%s@%s", s[0], d)
+	lastIndex := strings.LastIndex(url, ":")
+	firstPart := url[:lastIndex]
+
+	if s := strings.Split(url, ":"); len(s) >= 2 && !strings.Contains(url, "@") {
+		repoUrl = fmt.Sprintf("%s@%s", firstPart, d)
 	}
 
 	verififyOptions := notation.VerifyOptions{

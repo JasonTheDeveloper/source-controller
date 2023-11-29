@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	cryptotls "crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	gcrv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 	"github.com/sigstore/cosign/v2/pkg/cosign"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -689,6 +691,73 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 		}
 
 		return fmt.Errorf("no matching signatures were found for '%s'", ref)
+
+	case "notation":
+		// get the public keys from the given secret
+		if secretRef := obj.Spec.Verify.SecretRef; secretRef != nil {
+			certSecretName := types.NamespacedName{
+				Namespace: obj.Namespace,
+				Name:      secretRef.Name,
+			}
+
+			var pubSecret corev1.Secret
+			if err := r.Get(ctxTimeout, certSecretName, &pubSecret); err != nil {
+				return err
+			}
+
+			var doc trustpolicy.Document
+
+			signatureVerified := false
+			for k, data := range pubSecret.Data {
+				if strings.HasSuffix(k, ".json") {
+					if err := json.Unmarshal(data, &doc); err != nil {
+						return err
+					}
+				}
+			}
+
+			defaultNotaryOciOpts := []soci.NotationOptions{
+				soci.WithTrustStore(&doc),
+				soci.WithNotaryRemoteOptions(opt...),
+			}
+
+			keychain, err := r.keychain(ctx, obj)
+			if err != nil {
+				e := serror.NewGeneric(
+					fmt.Errorf("failed to get credential: %w", err),
+					sourcev1.AuthenticationFailedReason,
+				)
+				conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
+				return e
+			}
+
+			for k, data := range pubSecret.Data {
+				// search for public keys in the secret
+				if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
+
+					verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicKey(data), soci.WithNotaryKeychain(keychain), soci.WithInsecureRegistry(obj.Spec.Insecure))...)
+					if err != nil {
+						return err
+					}
+
+					signatures, err := verifier.Verify(ctxTimeout, ref)
+					if err != nil {
+						continue
+					}
+
+					if signatures {
+						signatureVerified = true
+						break
+					}
+				}
+			}
+
+			if !signatureVerified {
+				return fmt.Errorf("no matching signatures were found for '%s'", ref)
+			}
+			return nil
+		}
+		return nil
 	}
 
 	return nil
