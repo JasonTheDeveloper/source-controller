@@ -1399,7 +1399,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 			for k, data := range pubSecret.Data {
 				// search for public keys in the secret
-				if strings.HasSuffix(k, ".pem") {
+				if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
 
 					verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicKey(data), soci.WithNotaryKeychain(clientOpts.Keychain))...)
 					if err != nil {
