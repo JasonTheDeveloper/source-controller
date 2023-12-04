@@ -126,18 +126,29 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 
 	ss := stringResource{url}
 
-	au, err := v.auth.Resolve(ss)
-	authConfig, err := au.Authorization()
+	var credentialProvider func(ctx context.Context, registry string) (oauth.Credential, error)
 
-	credentialProvider := func(ctx context.Context, registry string) (oauth.Credential, error) {
-		if authConfig.Username != "" || authConfig.Password != "" || authConfig.IdentityToken != "" {
-			return oauth.Credential{
-				Username:     authConfig.Username,
-				Password:     authConfig.Password,
-				RefreshToken: authConfig.IdentityToken,
-			}, nil
+	if v.auth != nil {
+		au, err := v.auth.Resolve(ss)
+		if err != nil {
+			return false, err
 		}
-		return oauth.EmptyCredential, nil
+
+		authConfig, err := au.Authorization()
+		if err != nil {
+			return false, err
+		}
+
+		credentialProvider = func(ctx context.Context, registry string) (oauth.Credential, error) {
+			if authConfig.Username != "" || authConfig.Password != "" || authConfig.IdentityToken != "" {
+				return oauth.Credential{
+					Username:     authConfig.Username,
+					Password:     authConfig.Password,
+					RefreshToken: authConfig.IdentityToken,
+				}, nil
+			}
+			return oauth.EmptyCredential, nil
+		}
 	}
 
 	repoClient := &oauth.Client{
@@ -151,8 +162,14 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 	remoteRepo.Client = repoClient
 
 	i, err := remote.Image(ref, v.opts...)
+	if err != nil {
+		return false, err
+	}
 
 	d, err := i.Digest()
+	if err != nil {
+		return false, err
+	}
 
 	repoUrl := ""
 
