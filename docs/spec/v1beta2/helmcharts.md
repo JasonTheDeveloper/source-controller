@@ -252,14 +252,18 @@ For practical information, see
 
 **Note:** This feature is available only for Helm charts fetched from an OCI Registry.
 
-`.spec.verify` is an optional field to enable the verification of [Cosign](https://github.com/sigstore/cosign)
+`.spec.verify` is an optional field to enable the verification of [Cosign](https://github.com/sigstore/cosign) or [Notation](https://github.com/notaryproject/notation)
 signatures. The field offers three subfields:
 
-- `.provider`, to specify the verification provider. Only supports `cosign` at present.
+- `.provider`, to specify the verification provider. The supported options are `cosign` and `notation` at present.
 - `.secretRef.name`, to specify a reference to a Secret in the same namespace as
-  the HelmChart, containing the Cosign public keys of trusted authors.
-- `.matchOIDCIdentity`, to specify a list of OIDC identity matchers. Please see
+  the HelmChart, containing the Cosign public keys of trusted authors. For Notation this Secret should also include the [trust policy](https://notaryproject.dev/docs/user-guides/how-to/manage-trust-policy/) in addition to the public keys.
+- `.matchOIDCIdentity`, to specify a list of OIDC identity matchers (only supported when using `cosign` as the verification provider). Please see
    [Keyless verification](#keyless-verification) for more details.
+
+#### Cosign
+
+The `cosign` provider can be used to verify the signature of an OCI artifact using either a known public key or via the [Cosign Keyless](https://github.com/sigstore/cosign/blob/main/KEYLESS.md) procedure.
 
 ```yaml
 ---
@@ -281,7 +285,7 @@ following attributes to the HelmChart's `.status.conditions`:
 - `status: "True"`
 - `reason: Succeeded`
 
-#### Public keys verification
+##### Public keys verification
 
 To verify the authenticity of HelmChart hosted in an OCI Registry, create a Kubernetes
 secret with the Cosign public keys:
@@ -303,7 +307,7 @@ Note that the keys must have the `.pub` extension for Flux to make use of them.
 Flux will loop over the public keys and use them to verify a HelmChart's signature.
 This allows for older HelmCharts to be valid as long as the right key is in the secret.
 
-#### Keyless verification
+##### Keyless verification
 
 For publicly available HelmCharts, which are signed using the
 [Cosign Keyless](https://github.com/sigstore/cosign/blob/main/KEYLESS.md) procedure,
@@ -361,6 +365,53 @@ instance hosted at [rekor.sigstore.dev](https://rekor.sigstore.dev/).
 
 Note that keyless verification is an **experimental feature**, using
 custom root CAs or self-hosted Rekor instances are not currently supported.
+
+#### Notation
+
+The `notaiton` provider can be used to verify the signature of an OCI artifact using known
+public key and trust policy.
+
+```yaml
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmChart
+metadata:
+  name: podinfo
+spec:
+  verify:
+    provider: notation
+    secretRef:
+      name: notation-public-keys
+```
+
+When the verification succeeds, the controller adds a Condition with the
+following attributes to the HelmChart's `.status.conditions`:
+
+- `type: SourceVerified`
+- `status: "True"`
+- `reason: Succeeded`
+
+To verify the authenticity of an OCI artifact, create a Kubernetes secret
+with the Notation public key and trust policy:
+
+```yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notation-public-keys
+type: Opaque
+data:
+  key1.pem: <BASE64>
+  key2.crt: <BASE64>
+  policy.json: <BASE64>
+```
+
+Note that the keys must have either `.pem` or `.crt` extension and your trust policy must
+have the `.json` extension for Flux to make use of them.
+
+Flux will loop over the public keys and use them to verify an artifact's signature.
+This allows for older artifacts to be valid as long as the right key is in the secret.
 
 ## Working with HelmCharts
 
