@@ -604,7 +604,7 @@ custom root CAs or self-hosted Rekor instances are not currently supported.
 
 #### Notation
 
-The `notaiton` provider can be used to verify the signature of an OCI artifact using known
+The `notation` provider can be used to verify the signature of an OCI artifact using known
 public key and trust policy.
 
 ```yaml
