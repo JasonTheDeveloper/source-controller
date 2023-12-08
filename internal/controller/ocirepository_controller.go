@@ -742,6 +742,8 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 					signatures, err := verifier.Verify(ctxTimeout, ref)
 					if err != nil {
+						r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
+							"notation validation failed for '%s' with message: %s", ref, err)
 						continue
 					}
 
