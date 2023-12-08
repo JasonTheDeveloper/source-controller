@@ -507,8 +507,8 @@ signatures. The field offers three subfields:
 - `.provider`, to specify the verification provider. The supported options are `cosign` and `notation` at present.
 - `.secretRef.name`, to specify a reference to a Secret in the same namespace as
   the OCIRepository, containing the Cosign public keys of trusted authors. For Notation this Secret should also
-  include the [trust policy](https://notaryproject.dev/docs/user-guides/how-to/manage-trust-policy/) in
-  addition to the public keys.
+  include the [trust policy](https://github.com/notaryproject/specifications/blob/v1.0.0/specs/trust-store-trust-policy.md#trust-policy) in
+  addition to the CA certificate.
 - `.matchOIDCIdentity`, to specify a list of OIDC identity matchers (only supported when using `cosign` as the
   verification provider). Please see
    [Keyless verification](#keyless-verification) for more details.
@@ -605,7 +605,7 @@ custom root CAs or self-hosted Rekor instances are not currently supported.
 #### Notation
 
 The `notation` provider can be used to verify the signature of an OCI artifact using known
-public key and trust policy.
+trust policy and CA certificate.
 
 ```yaml
 ---
@@ -628,7 +628,7 @@ following attributes to the OCIRepository's `.status.conditions`:
 - `reason: Succeeded`
 
 To verify the authenticity of an OCI artifact, create a Kubernetes secret
-with the Notation public key and trust policy:
+with the Notation CA certificate and trust policy:
 
 ```yaml
 ---
@@ -638,12 +638,12 @@ metadata:
   name: notation-public-keys
 type: Opaque
 data:
-  key1.pem: <BASE64>
-  key2.crt: <BASE64>
+  certificate1.pem: <BASE64>
+  certificate2.crt: <BASE64>
   policy.json: <BASE64>
 ```
 
-Note that the keys must have either `.pem` or `.crt` extension and your trust policy must
+Note that the CA certificate must have either `.pem` or `.crt` extension and your trust policy must
 have the `.json` extension for Flux to make use of them.
 
 Flux will loop over the public keys and use them to verify an artifact's signature.
