@@ -91,8 +91,8 @@ func NewNotaryVerifier(opts ...NotationOptions) (*NotaryVerifier, error) {
 		certName := pol.Name
 		for _, store := range pol.TrustStores {
 			s := strings.Split(store, ":")
-			if len(s) == 0 {
-				return nil, fmt.Errorf("URL must not contain a tag; remove ':%s'", s[1])
+			if len(s) != 2 {
+				return nil, fmt.Errorf("trust store '%s' is invalid. Trust store name must contain a store type and a store name separated by ':'. For example 'ca:fluxcd.io'", store)
 			}
 			generateTrustStore(s[0], s[1], certName, o.PublicKey)
 		}
