@@ -735,7 +735,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 				// search for public keys in the secret
 				if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
 
-				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data, k), soci.WithNotaryKeychain(keychain), soci.WithInsecureRegistry(obj.Spec.Insecure))...)
+				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryKeychain(keychain), soci.WithInsecureRegistry(obj.Spec.Insecure))...)
 					if err != nil {
 						return err
 					}

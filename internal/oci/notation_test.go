@@ -22,9 +22,9 @@ func TestNotaryOptions(t *testing.T) {
 		},
 		{
 			name: "signature option",
-			opts: []NotationOptions{WithNotaryPublicCertificate([]byte("foo"), "bar.crt")},
+			opts: []NotationOptions{WithNotaryPublicCertificate([]byte("foo"))},
 			want: &notationOptions{
-				PublicCertificate: publicCertificate{[]byte("foo"), "bar.crt"},
+				PublicCertificate: []byte("foo"),
 				ROpt:              nil,
 			},
 		},
@@ -32,7 +32,7 @@ func TestNotaryOptions(t *testing.T) {
 			name: "keychain option",
 			opts: []NotationOptions{WithNotaryRemoteOptions(remote.WithAuthFromKeychain(authn.DefaultKeychain))},
 			want: &notationOptions{
-				PublicCertificate: publicCertificate{},
+				PublicCertificate: nil,
 				ROpt:              []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)},
 			},
 		},
@@ -43,7 +43,7 @@ func TestNotaryOptions(t *testing.T) {
 				remote.WithAuthFromKeychain(authn.DefaultKeychain),
 			)},
 			want: &notationOptions{
-				PublicCertificate: publicCertificate{},
+				PublicCertificate: nil,
 				ROpt: []remote.Option{
 					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
@@ -58,7 +58,7 @@ func TestNotaryOptions(t *testing.T) {
 				remote.WithTransport(http.DefaultTransport),
 			)},
 			want: &notationOptions{
-				PublicCertificate: publicCertificate{},
+				PublicCertificate: nil,
 				ROpt: []remote.Option{
 					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
@@ -70,7 +70,7 @@ func TestNotaryOptions(t *testing.T) {
 			name: "truststore, empty document",
 			opts: []NotationOptions{WithTrustStore(&trustpolicy.Document{})},
 			want: &notationOptions{
-				PublicCertificate: publicCertificate{},
+				PublicCertificate: nil,
 				ROpt:              nil,
 				TrustStore:        &trustpolicy.Document{},
 			},
@@ -79,7 +79,7 @@ func TestNotaryOptions(t *testing.T) {
 			name: "truststore, dummy document",
 			opts: []NotationOptions{WithTrustStore(dummyPolicyDocument())},
 			want: &notationOptions{
-				PublicCertificate: publicCertificate{},
+				PublicCertificate: nil,
 				ROpt:              nil,
 				TrustStore:        dummyPolicyDocument(),
 			},
@@ -88,7 +88,7 @@ func TestNotaryOptions(t *testing.T) {
 			name: "insecure, false",
 			opts: []NotationOptions{WithInsecureRegistry(false)},
 			want: &notationOptions{
-				PublicCertificate: publicCertificate{},
+				PublicCertificate: nil,
 				ROpt:              nil,
 				TrustStore:        nil,
 				Insecure:          false,
@@ -98,7 +98,7 @@ func TestNotaryOptions(t *testing.T) {
 			name: "insecure, true",
 			opts: []NotationOptions{WithInsecureRegistry(true)},
 			want: &notationOptions{
-				PublicCertificate: publicCertificate{},
+				PublicCertificate: nil,
 				ROpt:              nil,
 				TrustStore:        nil,
 				Insecure:          true,
@@ -108,7 +108,7 @@ func TestNotaryOptions(t *testing.T) {
 			name: "insecure, default",
 			opts: []NotationOptions{},
 			want: &notationOptions{
-				PublicCertificate: publicCertificate{},
+				PublicCertificate: nil,
 				ROpt:              nil,
 				TrustStore:        nil,
 				Insecure:          false,

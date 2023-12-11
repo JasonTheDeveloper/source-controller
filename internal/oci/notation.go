@@ -2,15 +2,15 @@ package oci
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/notaryproject/notation-go/dir"
 	verifier "github.com/notaryproject/notation-go/verifier"
 	"github.com/notaryproject/notation-go/verifier/truststore"
 
@@ -25,17 +25,11 @@ import (
 
 // notationOptions is a struct that holds options for notation verifier
 type notationOptions struct {
-	PublicCertificate publicCertificate
+	PublicCertificate []byte
 	TrustStore        *trustpolicy.Document
 	Keychain          authn.Keychain
 	ROpt              []remote.Option
 	Insecure          bool
-}
-
-// publicCertificate represents a public certificate with its data and name.
-type publicCertificate struct {
-	Data []byte
-	Name string
 }
 
 // NotationOptions is a function that configures the options applied to a notation verifier
@@ -60,9 +54,9 @@ func WithTrustStore(trustStore *trustpolicy.Document) NotationOptions {
 // It takes in the certificate data as a byte slice and the name of the certificate.
 // The function returns a NotationOptions function option that sets the public certificate
 // in the notation options.
-func WithNotaryPublicCertificate(data []byte, name string) NotationOptions {
+func WithNotaryPublicCertificate(data []byte) NotationOptions {
 	return func(opts *notationOptions) {
-		opts.PublicCertificate = publicCertificate{data, name}
+		opts.PublicCertificate = data
 	}
 }
 
@@ -90,6 +84,25 @@ type NotaryVerifier struct {
 	insecure bool
 }
 
+type trustStore struct {
+	cert []byte
+}
+
+// GetCertificates implements truststore.X509TrustStore.
+func (s trustStore) GetCertificates(ctx context.Context, storeType truststore.Type, namedStore string) ([]*x509.Certificate, error) {
+	block, _ := pem.Decode(s.cert)
+	if block == nil {
+		return nil, fmt.Errorf("failed to parse PEM block containing the public key in '%s'", namedStore)
+	}
+
+	certs, err := x509.ParseCertificates(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse certificate '%s': %s", namedStore, err)
+	}
+
+	return certs, nil
+}
+
 // NewNotaryVerifier initializes a new NotaryVerifier
 func NewNotaryVerifier(opts ...NotationOptions) (*NotaryVerifier, error) {
 	o := notationOptions{}
@@ -97,17 +110,11 @@ func NewNotaryVerifier(opts ...NotationOptions) (*NotaryVerifier, error) {
 		opt(&o)
 	}
 
-	for _, pol := range o.TrustStore.TrustPolicies {
-		for _, store := range pol.TrustStores {
-			s := strings.Split(store, ":")
-			if len(s) != 2 {
-				return nil, fmt.Errorf("trust store '%s' is invalid. Trust store name must contain a store type and a store name separated by ':'. For example 'ca:fluxcd.io'", store)
-			}
-			generateTrustStore(s[0], s[1], o.PublicCertificate.Name, o.PublicCertificate.Data)
-		}
+	store := &trustStore{
+		cert: o.PublicCertificate,
 	}
 
-	verifier, err := verifier.New(o.TrustStore, truststore.NewX509TrustStore(dir.ConfigFS()), nil)
+	verifier, err := verifier.New(o.TrustStore, store, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +202,6 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 	}
 
 	_, signatures, err := notation.Verify(ctx, *v.verifier, repo, verififyOptions)
-
 	if err != nil {
 		return false, err
 	}
@@ -205,23 +211,6 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 	}
 
 	return true, nil
-}
-
-// generateTrustStore generates a trust store directory with the specified
-// parameters and stores the certificate.
-// It takes the storeType (e.g. "ca", "signingAuthority"), storeName, certName, and data as input.
-// The function returns an error if there is any issue in generating the trust store.
-func generateTrustStore(storeType string, storeName string, certName string, data []byte) error {
-	dir.UserConfigDir = "/tmp"
-
-	trustStorePath, err := dir.ConfigFS().SysPath(dir.TrustStoreDir, "x509", storeType, storeName)
-	if err != nil {
-		return err
-	}
-
-	certFile := fmt.Sprintf("%s/%s", trustStorePath, certName)
-
-	return os.WriteFile(certFile, data, 0600)
 }
 
 // stringResource represents a resource with a string value.
