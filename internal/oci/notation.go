@@ -25,11 +25,17 @@ import (
 
 // notationOptions is a struct that holds options for notation verifier
 type notationOptions struct {
-	PublicKey  []byte
-	TrustStore *trustpolicy.Document
-	Keychain   authn.Keychain
-	ROpt       []remote.Option
-	Insecure   bool
+	PublicCertificate publicCertificate
+	TrustStore        *trustpolicy.Document
+	Keychain          authn.Keychain
+	ROpt              []remote.Option
+	Insecure          bool
+}
+
+// publicCertificate represents a public certificate with its data and name.
+type publicCertificate struct {
+	Data []byte
+	Name string
 }
 
 // NotationOptions is a function that configures the options applied to a notation verifier
@@ -49,10 +55,14 @@ func WithTrustStore(trustStore *trustpolicy.Document) NotationOptions {
 	}
 }
 
-// WithNotaryPublicKey sets the public key.
-func WithNotaryPublicKey(publicKey []byte) NotationOptions {
+// WithNotaryPublicCertificate is a function that creates a NotationOptions function option
+// to set the public certificate for notary.
+// It takes in the certificate data as a byte slice and the name of the certificate.
+// The function returns a NotationOptions function option that sets the public certificate
+// in the notation options.
+func WithNotaryPublicCertificate(data []byte, name string) NotationOptions {
 	return func(opts *notationOptions) {
-		opts.PublicKey = publicKey
+		opts.PublicCertificate = publicCertificate{data, name}
 	}
 }
 
@@ -88,13 +98,12 @@ func NewNotaryVerifier(opts ...NotationOptions) (*NotaryVerifier, error) {
 	}
 
 	for _, pol := range o.TrustStore.TrustPolicies {
-		certName := pol.Name
 		for _, store := range pol.TrustStores {
 			s := strings.Split(store, ":")
 			if len(s) != 2 {
 				return nil, fmt.Errorf("trust store '%s' is invalid. Trust store name must contain a store type and a store name separated by ':'. For example 'ca:fluxcd.io'", store)
 			}
-			generateTrustStore(s[0], s[1], certName, o.PublicKey)
+			generateTrustStore(s[0], s[1], o.PublicCertificate.Name, o.PublicCertificate.Data)
 		}
 	}
 
@@ -198,18 +207,21 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 	return true, nil
 }
 
-func generateTrustStore(storeType string, storeName string, certName string, cert []byte) error {
-	// changing the path of the trust store for demo purpose.
-	// Users could keep the default value, i.e. os.UserConfigDir.
-	dir.UserConfigDir = "tmp"
-	directory := fmt.Sprintf("tmp/truststore/x509/%s/%s", storeType, storeName)
-	certFile := fmt.Sprintf("%s/%s.pem", directory, certName)
+// generateTrustStore generates a trust store directory with the specified
+// parameters and stores the certificate.
+// It takes the storeType (e.g. "ca", "signingAuthority"), storeName, certName, and data as input.
+// The function returns an error if there is any issue in generating the trust store.
+func generateTrustStore(storeType string, storeName string, certName string, data []byte) error {
+	dir.UserConfigDir = "/tmp"
 
-	// Adding the certificate into the trust store.
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	trustStorePath, err := dir.ConfigFS().SysPath(dir.TrustStoreDir, "x509", storeType, storeName)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(certFile, cert, 0600)
+
+	certFile := fmt.Sprintf("%s/%s", trustStorePath, certName)
+
+	return os.WriteFile(certFile, data, 0600)
 }
 
 type stringResource struct {
