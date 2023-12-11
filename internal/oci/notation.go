@@ -224,14 +224,18 @@ func generateTrustStore(storeType string, storeName string, certName string, dat
 	return os.WriteFile(certFile, data, 0600)
 }
 
+// stringResource represents a resource with a string value.
 type stringResource struct {
 	registry string
 }
 
+// String returns the string representation of the stringResource.
 func (r stringResource) String() string {
 	return r.registry
 }
 
+// RegistryStr returns the registry part of the string resource.
+// It splits the registry string by "/" and returns the first element.
 func (r stringResource) RegistryStr() string {
 	return strings.Split(r.registry, "/")[0]
 }
