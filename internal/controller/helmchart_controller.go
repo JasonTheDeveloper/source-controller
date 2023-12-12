@@ -1331,8 +1331,8 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 				Name:      secretRef.Name,
 			}
 
-			var pubSecret corev1.Secret
-			if err := r.Get(ctx, certSecretName, &pubSecret); err != nil {
+			pubSecret, err := r.retrieveSecret(ctx, obj.Namespace, secretRef.Name)
+			if err != nil {
 				return nil, err
 			}
 
@@ -1371,46 +1371,59 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 		return verifiers, nil
 	case "notation":
 		// get the public keys from the given secret
-		if secretRef := obj.Spec.Verify.SecretRef; secretRef != nil {
-			certSecretName := types.NamespacedName{
-				Namespace: obj.Namespace,
-				Name:      secretRef.Name,
-			}
+		secretRef := obj.Spec.Verify.SecretRef
 
-			var pubSecret corev1.Secret
-			if err := r.Get(ctx, certSecretName, &pubSecret); err != nil {
-				return nil, err
-			}
+		if secretRef == nil {
+			return nil, fmt.Errorf("secretRef cannot be empty: '%s'", obj.Name)
+		}
 
-			var doc trustpolicy.Document
+		pubSecret, err := r.retrieveSecret(ctx, obj.Namespace, secretRef.Name)
+		if err != nil {
+			return nil, err
+		}
 
-			for k, data := range pubSecret.Data {
-				if strings.HasSuffix(k, ".json") {
-					if err := json.Unmarshal(data, &doc); err != nil {
-						return nil, err
-					}
+		var doc trustpolicy.Document
+
+		for k, data := range pubSecret.Data {
+			if strings.HasSuffix(k, ".json") {
+				if err := json.Unmarshal(data, &doc); err != nil {
+					return nil, err
 				}
 			}
+		}
 
-			defaultNotaryOciOpts := []soci.NotationOptions{
-				soci.WithTrustStore(&doc),
-				soci.WithNotaryRemoteOptions(verifyOpts...),
-			}
+		defaultNotaryOciOpts := []soci.NotationOptions{
+			soci.WithTrustStore(&doc),
+			soci.WithNotaryRemoteOptions(verifyOpts...),
+		}
 
-			for k, data := range pubSecret.Data {
-				// search for public keys in the secret
-				if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-
-					verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryKeychain(clientOpts.Keychain), soci.WithInsecureRegistry(repo.Spec.Insecure))...)
-					if err != nil {
-						return nil, err
-					}
-					verifiers = append(verifiers, verifier)
+		for k, data := range pubSecret.Data {
+			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
+				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryKeychain(clientOpts.Keychain), soci.WithInsecureRegistry(repo.Spec.Insecure))...)
+				if err != nil {
+					return nil, err
 				}
+				verifiers = append(verifiers, verifier)
 			}
 		}
 		return verifiers, nil
 	default:
 		return nil, fmt.Errorf("unsupported verification provider: %s", obj.Spec.Verify.Provider)
 	}
+}
+
+// retrieveSecret retrieves a secret from the specified namespace with the given secret name.
+// It returns the retrieved secret and any error encountered during the retrieval process.
+func (r *HelmChartReconciler) retrieveSecret(ctx context.Context, ns string, secretName string) (corev1.Secret, error) {
+	certSecretName := types.NamespacedName{
+		Namespace: ns,
+		Name:      secretName,
+	}
+
+	var pubSecret corev1.Secret
+
+	if err := r.Get(ctx, certSecretName, &pubSecret); err != nil {
+		return corev1.Secret{}, err
+	}
+	return pubSecret, nil
 }

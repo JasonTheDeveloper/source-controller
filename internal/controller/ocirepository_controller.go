@@ -626,13 +626,8 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		// get the public keys from the given secret
 		if secretRef := obj.Spec.Verify.SecretRef; secretRef != nil {
-			certSecretName := types.NamespacedName{
-				Namespace: obj.Namespace,
-				Name:      secretRef.Name,
-			}
-
-			var pubSecret corev1.Secret
-			if err := r.Get(ctxTimeout, certSecretName, &pubSecret); err != nil {
+			pubSecret, err := r.retrieveSecret(ctxTimeout, obj.Namespace, secretRef.Name)
+			if err != nil {
 				return err
 			}
 
@@ -694,75 +689,88 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 	case "notation":
 		// get the public keys from the given secret
-		if secretRef := obj.Spec.Verify.SecretRef; secretRef != nil {
-			certSecretName := types.NamespacedName{
-				Namespace: obj.Namespace,
-				Name:      secretRef.Name,
-			}
+		secretRef := obj.Spec.Verify.SecretRef
 
-			var pubSecret corev1.Secret
-			if err := r.Get(ctxTimeout, certSecretName, &pubSecret); err != nil {
-				return err
-			}
-
-			var doc trustpolicy.Document
-
-			signatureVerified := false
-			for k, data := range pubSecret.Data {
-				if strings.HasSuffix(k, ".json") {
-					if err := json.Unmarshal(data, &doc); err != nil {
-						return err
-					}
-				}
-			}
-
-			defaultNotaryOciOpts := []soci.NotationOptions{
-				soci.WithTrustStore(&doc),
-				soci.WithNotaryRemoteOptions(opt...),
-			}
-
-			keychain, err := r.keychain(ctx, obj)
-			if err != nil {
-				e := serror.NewGeneric(
-					fmt.Errorf("failed to get credential: %w", err),
-					sourcev1.AuthenticationFailedReason,
-				)
-				conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
-				return e
-			}
-
-			for k, data := range pubSecret.Data {
-				// search for public keys in the secret
-				if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-
-				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryKeychain(keychain), soci.WithInsecureRegistry(obj.Spec.Insecure))...)
-					if err != nil {
-						return err
-					}
-
-					signatures, err := verifier.Verify(ctxTimeout, ref)
-					if err != nil {
-						r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
-							"notation validation failed for '%s' with message: %s", ref, err)
-						continue
-					}
-
-					if signatures {
-						signatureVerified = true
-						break
-					}
-				}
-			}
-
-			if !signatureVerified {
-				return fmt.Errorf("no matching signatures were found for '%s'", ref)
-			}
-			return nil
+		if secretRef == nil {
+			return fmt.Errorf("secretRef cannot be empty: '%s'", ref)
 		}
+
+		pubSecret, err := r.retrieveSecret(ctxTimeout, obj.Namespace, secretRef.Name)
+		if err != nil {
+			return err
+		}
+
+		var doc trustpolicy.Document
+
+		signatureVerified := false
+		for k, data := range pubSecret.Data {
+			if strings.HasSuffix(k, ".json") {
+				if err := json.Unmarshal(data, &doc); err != nil {
+					return err
+				}
+			}
+		}
+
+		defaultNotaryOciOpts := []soci.NotationOptions{
+			soci.WithTrustStore(&doc),
+			soci.WithNotaryRemoteOptions(opt...),
+		}
+
+		keychain, err := r.keychain(ctx, obj)
+		if err != nil {
+			e := serror.NewGeneric(
+				fmt.Errorf("failed to get credential: %w", err),
+				sourcev1.AuthenticationFailedReason,
+			)
+			conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
+			return e
+		}
+
+		for k, data := range pubSecret.Data {
+			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
+				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryKeychain(keychain), soci.WithInsecureRegistry(obj.Spec.Insecure))...)
+				if err != nil {
+					return err
+				}
+
+				signatures, err := verifier.Verify(ctxTimeout, ref)
+				if err != nil {
+					r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
+						"notation validation failed for '%s' with message: %s", ref, err)
+					continue
+				}
+
+				if signatures {
+					signatureVerified = true
+					break
+				}
+			}
+		}
+
+		if !signatureVerified {
+			return fmt.Errorf("no matching signatures were found for '%s'", ref)
+		}
+
 		return nil
 	}
 
 	return nil
+}
+
+// retrieveSecret retrieves a secret from the specified namespace with the given secret name.
+// It returns the retrieved secret and any error encountered during the retrieval process.
+func (r *OCIRepositoryReconciler) retrieveSecret(ctx context.Context, ns string, secretName string) (corev1.Secret, error) {
+	certSecretName := types.NamespacedName{
+		Namespace: ns,
+		Name:      secretName,
+	}
+
+	var pubSecret corev1.Secret
+
+	if err := r.Get(ctx, certSecretName, &pubSecret); err != nil {
+		return corev1.Secret{}, err
+	}
+	return pubSecret, nil
 }
 
 // parseRepository validates and extracts the repository URL.
