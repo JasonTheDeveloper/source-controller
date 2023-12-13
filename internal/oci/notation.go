@@ -90,12 +90,13 @@ type trustStore struct {
 
 // GetCertificates implements truststore.X509TrustStore.
 func (s trustStore) GetCertificates(ctx context.Context, storeType truststore.Type, namedStore string) ([]*x509.Certificate, error) {
-	block, _ := pem.Decode(s.cert)
-	if block == nil {
-		return nil, fmt.Errorf("failed to parse PEM block containing the public key in '%s'", namedStore)
+	raw := s.cert
+	block, _ := pem.Decode(raw)
+	if block != nil {
+		raw = block.Bytes
 	}
 
-	certs, err := x509.ParseCertificates(block.Bytes)
+	certs, err := x509.ParseCertificates(raw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse certificate '%s': %s", namedStore, err)
 	}
