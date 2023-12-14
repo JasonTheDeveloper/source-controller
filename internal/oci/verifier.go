@@ -21,8 +21,10 @@ import (
 	"crypto"
 	"fmt"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/fulcio"
 	coptions "github.com/sigstore/cosign/v2/cmd/cosign/cli/options"
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/rekor"
@@ -43,6 +45,9 @@ type options struct {
 	PublicKey  []byte
 	ROpt       []remote.Option
 	Identities []cosign.Identity
+	TrustStore *trustpolicy.Document
+	Keychain   authn.Keychain
+	Insecure   bool
 }
 
 // Options is a function that configures the options applied to a Verifier.

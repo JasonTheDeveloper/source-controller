@@ -1393,7 +1393,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, err
 		}
 
-		defaultNotaryOciOpts := []soci.NotationOptions{
+		defaultNotaryOciOpts := []soci.Options{
 			soci.WithTrustStore(&doc),
 			soci.WithNotaryRemoteOptions(verifyOpts...),
 		}

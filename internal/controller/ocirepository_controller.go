@@ -713,7 +713,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		signatureVerified := false
 
-		defaultNotaryOciOpts := []soci.NotationOptions{
+		defaultNotaryOciOpts := []soci.Options{
 			soci.WithTrustStore(&doc),
 			soci.WithNotaryRemoteOptions(opt...),
 		}

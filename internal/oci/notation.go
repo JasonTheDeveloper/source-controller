@@ -23,28 +23,16 @@ import (
 	oauth "oras.land/oras-go/v2/registry/remote/auth"
 )
 
-// notationOptions is a struct that holds options for notation verifier
-type notationOptions struct {
-	PublicCertificate []byte
-	TrustStore        *trustpolicy.Document
-	Keychain          authn.Keychain
-	ROpt              []remote.Option
-	Insecure          bool
-}
-
-// NotationOptions is a function that configures the options applied to a notation verifier
-type NotationOptions func(opts *notationOptions)
-
 // WithInsecureRegistry sets notation to verify against insecure registry.
-func WithInsecureRegistry(insecure bool) NotationOptions {
-	return func(opts *notationOptions) {
+func WithInsecureRegistry(insecure bool) Options {
+	return func(opts *options) {
 		opts.Insecure = insecure
 	}
 }
 
 // WithTrustStore sets the trust store configuration.
-func WithTrustStore(trustStore *trustpolicy.Document) NotationOptions {
-	return func(opts *notationOptions) {
+func WithTrustStore(trustStore *trustpolicy.Document) Options {
+	return func(opts *options) {
 		opts.TrustStore = trustStore
 	}
 }
@@ -54,24 +42,24 @@ func WithTrustStore(trustStore *trustpolicy.Document) NotationOptions {
 // It takes in the certificate data as a byte slice and the name of the certificate.
 // The function returns a NotationOptions function option that sets the public certificate
 // in the notation options.
-func WithNotaryPublicCertificate(data []byte) NotationOptions {
-	return func(opts *notationOptions) {
-		opts.PublicCertificate = data
+func WithNotaryPublicCertificate(data []byte) Options {
+	return func(opts *options) {
+		opts.PublicKey = data
 	}
 }
 
 // WithNotaryRemoteOptions is a functional option for overriding the default
 // remote options used by the verifier
-func WithNotaryRemoteOptions(opts ...remote.Option) NotationOptions {
-	return func(o *notationOptions) {
+func WithNotaryRemoteOptions(opts ...remote.Option) Options {
+	return func(o *options) {
 		o.ROpt = opts
 	}
 }
 
 // WithNotaryKeychain is a functional option for overriding the default
 // remote options used by the verifier
-func WithNotaryKeychain(key authn.Keychain) NotationOptions {
-	return func(o *notationOptions) {
+func WithNotaryKeychain(key authn.Keychain) Options {
+	return func(o *options) {
 		o.Keychain = key
 	}
 }
@@ -105,14 +93,14 @@ func (s trustStore) GetCertificates(ctx context.Context, storeType truststore.Ty
 }
 
 // NewNotaryVerifier initializes a new NotaryVerifier
-func NewNotaryVerifier(opts ...NotationOptions) (*NotaryVerifier, error) {
-	o := notationOptions{}
+func NewNotaryVerifier(opts ...Options) (*NotaryVerifier, error) {
+	o := options{}
 	for _, opt := range opts {
 		opt(&o)
 	}
 
 	store := &trustStore{
-		cert: o.PublicCertificate,
+		cert: o.PublicKey,
 	}
 
 	verifier, err := verifier.New(o.TrustStore, store, nil)
