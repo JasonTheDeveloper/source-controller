@@ -579,7 +579,7 @@ func (r *HelmChartReconciler) buildFromHelmRepository(ctx context.Context, obj *
 		var verifiers []soci.Verifier
 		if obj.Spec.Verify != nil {
 			provider := obj.Spec.Verify.Provider
-			verifiers, err = r.makeVerifiers(ctx, obj, repo, *clientOpts)
+			verifiers, err = r.makeVerifiers(ctx, obj, *clientOpts)
 			if err != nil {
 				if obj.Spec.Verify.SecretRef == nil {
 					provider = fmt.Sprintf("%s keyless", provider)
@@ -1308,7 +1308,7 @@ func chartRepoConfigErrorReturn(err error, obj *helmv1.HelmChart) (sreconcile.Re
 }
 
 // makeVerifiers returns a list of verifiers for the given chart.
-func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.HelmChart, repo *helmv1.HelmRepository, clientOpts getter.ClientOpts) ([]soci.Verifier, error) {
+func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.HelmChart, clientOpts getter.ClientOpts) ([]soci.Verifier, error) {
 	var verifiers []soci.Verifier
 	verifyOpts := []remote.Option{}
 
@@ -1399,7 +1399,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryKeychain(clientOpts.Keychain), soci.WithInsecureRegistry(repo.Spec.Insecure))...)
+				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryKeychain(clientOpts.Keychain), soci.WithInsecureRegistry(clientOpts.Insecure))...)
 				if err != nil {
 					return nil, err
 				}
