@@ -1314,7 +1314,7 @@ func TestOCIRepository_reconcileSource_verifyOCISourceSignatureNotation(t *testi
 		},
 		Data: map[string][]byte{
 			"notation.crt": certTuple.Cert.Raw,
-			"policy.json":  policy,
+			"trustpolicy.json":  policy,
 		}}
 
 	g.Expect(r.Create(ctx, secret)).NotTo(HaveOccurred())

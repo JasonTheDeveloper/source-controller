@@ -700,16 +700,18 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			return err
 		}
 
+		data, ok := pubSecret.Data["trustpolicy.json"]
+		if !ok {
+			return fmt.Errorf("trustpolicy.json not found in secret '%s'", secretRef.Name)
+		}
+
 		var doc trustpolicy.Document
 
-		signatureVerified := false
-		for k, data := range pubSecret.Data {
-			if strings.HasSuffix(k, ".json") {
-				if err := json.Unmarshal(data, &doc); err != nil {
-					return err
-				}
-			}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return err
 		}
+
+		signatureVerified := false
 
 		defaultNotaryOciOpts := []soci.NotationOptions{
 			soci.WithTrustStore(&doc),

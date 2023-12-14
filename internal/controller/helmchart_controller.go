@@ -1382,14 +1382,15 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, err
 		}
 
+		data, ok := pubSecret.Data["trustpolicy.json"]
+		if !ok {
+			return nil, fmt.Errorf("trustpolicy.json not found in secret '%s'", secretRef.Name)
+		}
+
 		var doc trustpolicy.Document
 
-		for k, data := range pubSecret.Data {
-			if strings.HasSuffix(k, ".json") {
-				if err := json.Unmarshal(data, &doc); err != nil {
-					return nil, err
-				}
-			}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return nil, err
 		}
 
 		defaultNotaryOciOpts := []soci.NotationOptions{

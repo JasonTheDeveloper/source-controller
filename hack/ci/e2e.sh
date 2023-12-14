@@ -146,8 +146,8 @@ kubectl -n source-system wait helmchart/podinfo-keyless --for=condition=ready --
 
 kubectl -n source-system apply -f "${ROOT_DIR}/config/testdata/helmchart-from-oci/notation.yaml"
 curl -sSLo notation.crt https://raw.githubusercontent.com/jasonthedeveloper/podinfo/feat/notation/.notation/notation.crt
-curl -sSLo policy.json https://raw.githubusercontent.com/jasonthedeveloper/podinfo/feat/notation/.notation/policy.json
-kubectl -n source-system create secret generic notation-config --from-file=notation.crt --from-file=policy.json --dry-run=client -o yaml | kubectl apply -f -
+curl -sSLo trustpolicy.json https://raw.githubusercontent.com/jasonthedeveloper/podinfo/feat/notation/.notation/trustpolicy.json
+kubectl -n source-system create secret generic notation-config --from-file=notation.crt --from-file=trustpolicy.json --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n source-system wait helmchart/podinfo-notation --for=condition=ready --timeout=1m
 
 echo "Run OCIRepository verify tests"

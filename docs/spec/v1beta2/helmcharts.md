@@ -405,11 +405,11 @@ type: Opaque
 data:
   certificate1.pem: <BASE64>
   certificate2.crt: <BASE64>
-  policy.json: <BASE64>
+  trustpolicy.json: <BASE64>
 ```
 
 Note that the CA certificate must have either `.pem` or `.crt` extension and your trust policy must
-have the `.json` extension for Flux to make use of them.
+be named `trustpolicy.json` for Flux to make use of them.
 
 Flux will loop over the public keys and use them to verify an artifact's signature.
 This allows for older artifacts to be valid as long as the right key is in the secret.
