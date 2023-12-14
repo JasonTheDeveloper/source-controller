@@ -1313,8 +1313,8 @@ func TestOCIRepository_reconcileSource_verifyOCISourceSignatureNotation(t *testi
 			Name: "notation",
 		},
 		Data: map[string][]byte{
-			"notation.crt": certTuple.Cert.Raw,
-			"trustpolicy.json":  policy,
+			"notation.crt":     certTuple.Cert.Raw,
+			"trustpolicy.json": policy,
 		}}
 
 	g.Expect(r.Create(ctx, secret)).NotTo(HaveOccurred())

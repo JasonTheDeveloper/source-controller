@@ -2889,8 +2889,8 @@ func TestHelmChartReconciler_reconcileSourceFromOCI_verifySignatureNotation(t *t
 					Name: "notation-config",
 				},
 				Data: map[string][]byte{
-					"notation.crt": certTuple.Cert.Raw,
-					"trustpolicy.json":  policy,
+					"notation.crt":     certTuple.Cert.Raw,
+					"trustpolicy.json": policy,
 				}}
 
 			caSecret := &corev1.Secret{
