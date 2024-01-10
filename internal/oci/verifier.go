@@ -46,6 +46,7 @@ type options struct {
 	ROpt       []remote.Option
 	Identities []cosign.Identity
 	TrustStore *trustpolicy.Document
+	Auth       authn.Authenticator
 	Keychain   authn.Keychain
 	Insecure   bool
 }

@@ -728,9 +728,24 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			return e
 		}
 
+		var auth authn.Authenticator
+
+		if _, ok := keychain.(soci.Anonymous); obj.Spec.Provider != ociv1.GenericOCIProvider && ok {
+			var authErr error
+			auth, authErr = soci.OIDCAuth(ctxTimeout, obj.Spec.URL, obj.Spec.Provider)
+			if authErr != nil && !errors.Is(authErr, oci.ErrUnconfiguredProvider) {
+				e := serror.NewGeneric(
+					fmt.Errorf("failed to get credential from %s: %w", obj.Spec.Provider, authErr),
+					sourcev1.AuthenticationFailedReason,
+				)
+				conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
+				return e
+			}
+		}
+
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryKeychain(keychain), soci.WithInsecureRegistry(obj.Spec.Insecure))...)
+				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryAuth(auth), soci.WithNotaryKeychain(keychain), soci.WithInsecureRegistry(obj.Spec.Insecure))...)
 				if err != nil {
 					return err
 				}

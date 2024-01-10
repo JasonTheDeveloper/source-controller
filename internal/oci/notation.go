@@ -56,6 +56,14 @@ func WithNotaryRemoteOptions(opts ...remote.Option) Options {
 	}
 }
 
+// WithNotaryAuth is a functional option for overriding the default
+// remote options used by the verifier
+func WithNotaryAuth(auth authn.Authenticator) Options {
+	return func(o *options) {
+		o.Auth = auth
+	}
+}
+
 // WithNotaryKeychain is a functional option for overriding the default
 // remote options used by the verifier
 func WithNotaryKeychain(key authn.Keychain) Options {
@@ -66,7 +74,8 @@ func WithNotaryKeychain(key authn.Keychain) Options {
 
 // NotatryVerifier is a struct which is responsible for executing verification logic
 type NotaryVerifier struct {
-	auth     authn.Keychain
+	auth     authn.Authenticator
+	keychain authn.Keychain
 	verifier *notation.Verifier
 	opts     []remote.Option
 	insecure bool
@@ -108,8 +117,16 @@ func NewNotaryVerifier(opts ...Options) (*NotaryVerifier, error) {
 		return nil, err
 	}
 
+	switch {
+	case o.Auth != nil && o.Keychain != nil:
+		return nil, fmt.Errorf("please provide either authn.Authenticator or authn.Keychain")
+	case o.Auth == nil:
+		o.Auth = authn.Anonymous
+	}
+
 	return &NotaryVerifier{
-		auth:     o.Keychain,
+		auth:     o.Auth,
+		keychain: o.Keychain,
 		verifier: &verifier,
 		opts:     o.ROpt,
 		insecure: o.Insecure,
@@ -129,17 +146,22 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 
 	repo := registry.NewRepository(remoteRepo)
 
-	ss := stringResource{url}
+	credentialProvider := func(ctx context.Context, registry string) (oauth.Credential, error) {
+		return oauth.EmptyCredential, nil
+	}
 
-	var credentialProvider func(ctx context.Context, registry string) (oauth.Credential, error)
+	auth := v.auth
+	if v.keychain != nil {
+		source := stringResource{url}
 
-	if v.auth != nil {
-		au, err := v.auth.Resolve(ss)
+		auth, err = v.keychain.Resolve(source)
 		if err != nil {
 			return false, err
 		}
+	}
 
-		authConfig, err := au.Authorization()
+	if auth != authn.Anonymous {
+		authConfig, err := auth.Authorization()
 		if err != nil {
 			return false, err
 		}
