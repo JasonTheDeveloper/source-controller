@@ -30,33 +30,47 @@ func TestOptionsForNotary(t *testing.T) {
 		},
 		{
 			name: "keychain option",
-			opts: []Options{WithNotaryRemoteOptions(remote.WithAuthFromKeychain(authn.DefaultKeychain))},
+			opts: []Options{
+				WithNotaryRemoteOptions(remote.WithAuthFromKeychain(authn.DefaultKeychain)),
+				WithNotaryKeychain(authn.DefaultKeychain),
+			},
 			want: &options{
 				PublicKey: nil,
 				ROpt:      []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)},
+				Keychain:  authn.DefaultKeychain,
 			},
 		},
 		{
 			name: "keychain and authenticator option",
-			opts: []Options{WithNotaryRemoteOptions(
-				remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
-				remote.WithAuthFromKeychain(authn.DefaultKeychain),
-			)},
+			opts: []Options{
+				WithNotaryRemoteOptions(
+					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
+					remote.WithAuthFromKeychain(authn.DefaultKeychain),
+				),
+				WithNotaryAuth(&authn.Basic{Username: "foo", Password: "bar"}),
+				WithNotaryKeychain(authn.DefaultKeychain),
+			},
 			want: &options{
 				PublicKey: nil,
 				ROpt: []remote.Option{
 					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
 				},
+				Auth:     &authn.Basic{Username: "foo", Password: "bar"},
+				Keychain: authn.DefaultKeychain,
 			},
 		},
 		{
 			name: "keychain, authenticator and transport option",
-			opts: []Options{WithNotaryRemoteOptions(
-				remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
-				remote.WithAuthFromKeychain(authn.DefaultKeychain),
-				remote.WithTransport(http.DefaultTransport),
-			)},
+			opts: []Options{
+				WithNotaryRemoteOptions(
+					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
+					remote.WithAuthFromKeychain(authn.DefaultKeychain),
+					remote.WithTransport(http.DefaultTransport),
+				),
+				WithNotaryAuth(&authn.Basic{Username: "foo", Password: "bar"}),
+				WithNotaryKeychain(authn.DefaultKeychain),
+			},
 			want: &options{
 				PublicKey: nil,
 				ROpt: []remote.Option{
@@ -64,6 +78,8 @@ func TestOptionsForNotary(t *testing.T) {
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
 					remote.WithTransport(http.DefaultTransport),
 				},
+				Auth:     &authn.Basic{Username: "foo", Password: "bar"},
+				Keychain: authn.DefaultKeychain,
 			},
 		},
 		{

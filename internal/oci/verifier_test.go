@@ -42,14 +42,14 @@ func TestOptions(t *testing.T) {
 			ROpt:      nil,
 		},
 	}, {
-		name: "keychain option",
+		name: "remote keychain option",
 		opts: []Options{WithRemoteOptions(remote.WithAuthFromKeychain(authn.DefaultKeychain))},
 		want: &options{
 			PublicKey: nil,
 			ROpt:      []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)},
 		},
 	}, {
-		name: "keychain and authenticator option",
+		name: "remote keychain and authenticator option",
 		opts: []Options{WithRemoteOptions(
 			remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 			remote.WithAuthFromKeychain(authn.DefaultKeychain),
@@ -62,7 +62,7 @@ func TestOptions(t *testing.T) {
 			},
 		},
 	}, {
-		name: "keychain, authenticator and transport option",
+		name: "remote keychain, authenticator and transport option",
 		opts: []Options{WithRemoteOptions(
 			remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 			remote.WithAuthFromKeychain(authn.DefaultKeychain),
@@ -75,6 +75,24 @@ func TestOptions(t *testing.T) {
 				remote.WithAuthFromKeychain(authn.DefaultKeychain),
 				remote.WithTransport(http.DefaultTransport),
 			},
+		},
+	}, {
+		name: "keychain option",
+		opts: []Options{WithNotaryKeychain(authn.DefaultKeychain)},
+		want: &options{
+			PublicKey: nil,
+			Keychain:  authn.DefaultKeychain,
+		},
+	}, {
+		name: "keychain and authenticator option",
+		opts: []Options{
+			WithNotaryAuth(&authn.Basic{Username: "foo", Password: "bar"}),
+			WithNotaryKeychain(authn.DefaultKeychain),
+		},
+		want: &options{
+			PublicKey: nil,
+			Auth:      &authn.Basic{Username: "foo", Password: "bar"},
+			Keychain:  authn.DefaultKeychain,
 		},
 	}, {
 		name: "identities option",
