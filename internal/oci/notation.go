@@ -143,7 +143,8 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 		return oauth.EmptyCredential, nil
 	}
 
-	var auth authn.Authenticator
+	auth := authn.Anonymous
+
 	if v.auth != nil {
 		auth = v.auth
 	} else if v.keychain != nil {
