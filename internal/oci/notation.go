@@ -162,11 +162,12 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 		}
 
 		credentialProvider = func(ctx context.Context, registry string) (oauth.Credential, error) {
-			if authConfig.Username != "" || authConfig.Password != "" || authConfig.IdentityToken != "" {
+			if authConfig.Username != "" || authConfig.Password != "" || authConfig.IdentityToken != "" || authConfig.RegistryToken != "" {
 				return oauth.Credential{
 					Username:     authConfig.Username,
 					Password:     authConfig.Password,
 					RefreshToken: authConfig.IdentityToken,
+					AccessToken:  authConfig.RegistryToken,
 				}, nil
 			}
 			return oauth.EmptyCredential, nil
