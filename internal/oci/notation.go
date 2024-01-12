@@ -150,8 +150,10 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 		return oauth.EmptyCredential, nil
 	}
 
-	auth := v.auth
-	if v.keychain != nil {
+	var auth authn.Authenticator
+	if v.auth != nil {
+		auth = v.auth
+	} else if v.keychain != nil {
 		source := stringResource{url}
 
 		auth, err = v.keychain.Resolve(source)
