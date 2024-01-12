@@ -33,7 +33,7 @@ func WithInsecureRegistry(insecure bool) Options {
 // WithTrustStore sets the trust store configuration.
 func WithTrustStore(trustStore *trustpolicy.Document) Options {
 	return func(opts *options) {
-		opts.TrustStore = trustStore
+		opts.TrustPolicy = trustStore
 	}
 }
 
@@ -112,7 +112,7 @@ func NewNotaryVerifier(opts ...Options) (*NotaryVerifier, error) {
 		cert: o.PublicKey,
 	}
 
-	verifier, err := verifier.New(o.TrustStore, store, nil)
+	verifier, err := verifier.New(o.TrustPolicy, store, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -42,13 +42,13 @@ type Verifier interface {
 
 // options is a struct that holds options for verifier.
 type options struct {
-	PublicKey  []byte
-	ROpt       []remote.Option
-	Identities []cosign.Identity
-	TrustStore *trustpolicy.Document
-	Auth       authn.Authenticator
-	Keychain   authn.Keychain
-	Insecure   bool
+	PublicKey   []byte
+	ROpt        []remote.Option
+	Identities  []cosign.Identity
+	TrustPolicy *trustpolicy.Document
+	Auth        authn.Authenticator
+	Keychain    authn.Keychain
+	Insecure    bool
 }
 
 // Options is a function that configures the options applied to a Verifier.

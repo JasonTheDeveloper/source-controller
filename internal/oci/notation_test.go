@@ -86,48 +86,48 @@ func TestOptionsForNotary(t *testing.T) {
 			name: "truststore, empty document",
 			opts: []Options{WithTrustStore(&trustpolicy.Document{})},
 			want: &options{
-				PublicKey:  nil,
-				ROpt:       nil,
-				TrustStore: &trustpolicy.Document{},
+				PublicKey:   nil,
+				ROpt:        nil,
+				TrustPolicy: &trustpolicy.Document{},
 			},
 		},
 		{
 			name: "truststore, dummy document",
 			opts: []Options{WithTrustStore(dummyPolicyDocument())},
 			want: &options{
-				PublicKey:  nil,
-				ROpt:       nil,
-				TrustStore: dummyPolicyDocument(),
+				PublicKey:   nil,
+				ROpt:        nil,
+				TrustPolicy: dummyPolicyDocument(),
 			},
 		},
 		{
 			name: "insecure, false",
 			opts: []Options{WithInsecureRegistry(false)},
 			want: &options{
-				PublicKey:  nil,
-				ROpt:       nil,
-				TrustStore: nil,
-				Insecure:   false,
+				PublicKey:   nil,
+				ROpt:        nil,
+				TrustPolicy: nil,
+				Insecure:    false,
 			},
 		},
 		{
 			name: "insecure, true",
 			opts: []Options{WithInsecureRegistry(true)},
 			want: &options{
-				PublicKey:  nil,
-				ROpt:       nil,
-				TrustStore: nil,
-				Insecure:   true,
+				PublicKey:   nil,
+				ROpt:        nil,
+				TrustPolicy: nil,
+				Insecure:    true,
 			},
 		},
 		{
 			name: "insecure, default",
 			opts: []Options{},
 			want: &options{
-				PublicKey:  nil,
-				ROpt:       nil,
-				TrustStore: nil,
-				Insecure:   false,
+				PublicKey:   nil,
+				ROpt:        nil,
+				TrustPolicy: nil,
+				Insecure:    false,
 			},
 		},
 	}
@@ -143,8 +143,8 @@ func TestOptionsForNotary(t *testing.T) {
 				t.Errorf("got %#v, want %#v", &o.PublicKey, tc.want.PublicKey)
 			}
 
-			if !reflect.DeepEqual(o.TrustStore, tc.want.TrustStore) {
-				t.Errorf("got %#v, want %#v", &o.TrustStore, tc.want.TrustStore)
+			if !reflect.DeepEqual(o.TrustPolicy, tc.want.TrustPolicy) {
+				t.Errorf("got %#v, want %#v", &o.TrustPolicy, tc.want.TrustPolicy)
 			}
 
 			if tc.want.ROpt != nil {
