@@ -117,13 +117,6 @@ func NewNotaryVerifier(opts ...Options) (*NotaryVerifier, error) {
 		return nil, err
 	}
 
-	switch {
-	case o.Auth != nil && o.Keychain != nil:
-		return nil, fmt.Errorf("please provide either authn.Authenticator or authn.Keychain")
-	case o.Auth == nil:
-		o.Auth = authn.Anonymous
-	}
-
 	return &NotaryVerifier{
 		auth:     o.Auth,
 		keychain: o.Keychain,
