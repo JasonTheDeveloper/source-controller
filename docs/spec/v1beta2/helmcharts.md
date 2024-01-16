@@ -257,7 +257,7 @@ signatures. The field offers three subfields:
 
 - `.provider`, to specify the verification provider. The supported options are `cosign` and `notation` at present.
 - `.secretRef.name`, to specify a reference to a Secret in the same namespace as
-  the HelmChart, containing the Cosign public keys of trusted authors. For Notation this Secret should also include the [trust policy](https://github.com/notaryproject/specifications/blob/v1.0.0/specs/trust-store-trust-policy.md#trust-policy) in
+  the HelmChart, containing the public keys of trusted authors. For Notation this Secret should also include the [trust policy](https://github.com/notaryproject/specifications/blob/v1.0.0/specs/trust-store-trust-policy.md#trust-policy) in
   addition to the CA certificate.
 - `.matchOIDCIdentity`, to specify a list of OIDC identity matchers (only supported when using `cosign` as the verification provider). Please see
    [Keyless verification](#keyless-verification) for more details.
