@@ -1326,12 +1326,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 		// get the public keys from the given secret
 		if secretRef := obj.Spec.Verify.SecretRef; secretRef != nil {
-			certSecretName := types.NamespacedName{
-				Namespace: obj.Namespace,
-				Name:      secretRef.Name,
-			}
-
-			pubSecret, err := r.retrieveSecret(ctx, obj.Namespace, secretRef.Name)
+			pubSecret, certSecretName, err := r.retrieveSecret(ctx, obj.Namespace, secretRef.Name)
 			if err != nil {
 				return nil, err
 			}
@@ -1377,7 +1372,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, fmt.Errorf("secretRef cannot be empty: '%s'", obj.Name)
 		}
 
-		pubSecret, err := r.retrieveSecret(ctx, obj.Namespace, secretRef.Name)
+		pubSecret, _, err := r.retrieveSecret(ctx, obj.Namespace, secretRef.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -1415,7 +1410,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 // retrieveSecret retrieves a secret from the specified namespace with the given secret name.
 // It returns the retrieved secret and any error encountered during the retrieval process.
-func (r *HelmChartReconciler) retrieveSecret(ctx context.Context, ns string, secretName string) (corev1.Secret, error) {
+func (r *HelmChartReconciler) retrieveSecret(ctx context.Context, ns string, secretName string) (corev1.Secret, string, error) {
 	certSecretName := types.NamespacedName{
 		Namespace: ns,
 		Name:      secretName,
@@ -1424,7 +1419,7 @@ func (r *HelmChartReconciler) retrieveSecret(ctx context.Context, ns string, sec
 	var pubSecret corev1.Secret
 
 	if err := r.Get(ctx, certSecretName, &pubSecret); err != nil {
-		return corev1.Secret{}, err
+		return corev1.Secret{}, certSecretName.String(), err
 	}
-	return pubSecret, nil
+	return pubSecret, certSecretName.String(), nil
 }
