@@ -432,7 +432,7 @@ func (r *OCIRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 		conditions.GetObservedGeneration(obj, sourcev1.SourceVerifiedCondition) != obj.Generation ||
 		conditions.IsFalse(obj, sourcev1.SourceVerifiedCondition) {
 
-		err := r.verifySignature(ctx, obj, ref, opts...)
+		err := r.verifySignature(ctx, obj, ref, keychain, auth, opts...)
 		if err != nil {
 			provider := obj.Spec.Verify.Provider
 			if obj.Spec.Verify.SecretRef == nil {
@@ -613,7 +613,7 @@ func (r *OCIRepositoryReconciler) digestFromRevision(revision string) string {
 // verifySignature verifies the authenticity of the given image reference URL.
 // First, it tries to use a key if a Secret with a valid public key is provided.
 // If not, it falls back to a keyless approach for verification.
-func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv1.OCIRepository, ref name.Reference, opt ...remote.Option) error {
+func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv1.OCIRepository, ref name.Reference, keychain authn.Keychain, auth authn.Authenticator, opt ...remote.Option) error {
 	ctxTimeout, cancel := context.WithTimeout(ctx, obj.Spec.Timeout.Duration)
 	defer cancel()
 
@@ -716,31 +716,6 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 		defaultNotaryOciOpts := []soci.Options{
 			soci.WithTrustStore(&doc),
 			soci.WithNotaryRemoteOptions(opt...),
-		}
-
-		keychain, err := r.keychain(ctx, obj)
-		if err != nil {
-			e := serror.NewGeneric(
-				fmt.Errorf("failed to get credential: %w", err),
-				sourcev1.AuthenticationFailedReason,
-			)
-			conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
-			return e
-		}
-
-		var auth authn.Authenticator
-
-		if _, ok := keychain.(soci.Anonymous); obj.Spec.Provider != ociv1.GenericOCIProvider && ok {
-			var authErr error
-			auth, authErr = soci.OIDCAuth(ctxTimeout, obj.Spec.URL, obj.Spec.Provider)
-			if authErr != nil && !errors.Is(authErr, oci.ErrUnconfiguredProvider) {
-				e := serror.NewGeneric(
-					fmt.Errorf("failed to get credential from %s: %w", obj.Spec.Provider, authErr),
-					sourcev1.AuthenticationFailedReason,
-				)
-				conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, e.Reason, e.Err.Error())
-				return e
-			}
 		}
 
 		for k, data := range pubSecret.Data {
