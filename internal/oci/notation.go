@@ -185,29 +185,9 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 
 	remoteRepo.Client = repoClient
 
-	i, err := remote.Image(ref, v.opts...)
+	repoUrl, err := v.repoUrlWithDigest(url, ref)
 	if err != nil {
 		return false, err
-	}
-
-	repoUrl := url
-
-	if !strings.Contains(repoUrl, "@") {
-		d, err := i.Digest()
-		if err != nil {
-			return false, err
-		}
-
-		firstPart := ""
-
-		lastIndex := strings.LastIndex(url, ":")
-		if lastIndex != -1 {
-			firstPart = url[:lastIndex]
-		}
-
-		if s := strings.Split(url, ":"); len(s) >= 2 {
-			repoUrl = fmt.Sprintf("%s@%s", firstPart, d)
-		}
 	}
 
 	verififyOptions := notation.VerifyOptions{
@@ -225,6 +205,36 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 	}
 
 	return true, nil
+}
+
+// repoUrlWithDigest takes a repository URL and a reference and returns the repository URL with the digest appended to it.
+// If the repository URL does not contain a tag or digest, it returns an error.
+func (v *NotaryVerifier) repoUrlWithDigest(repoUrl string, ref name.Reference) (string, error) {
+	if !strings.Contains(repoUrl, "@") {
+		image, err := remote.Image(ref, v.opts...)
+		if err != nil {
+			return "", err
+		}
+
+		digest, err := image.Digest()
+		if err != nil {
+			return "", err
+		}
+
+		lastIndex := strings.LastIndex(repoUrl, ":")
+		if lastIndex == -1 {
+			return "", fmt.Errorf("url %s does not contain tag or digest", repoUrl)
+		}
+
+		firstPart := repoUrl[:lastIndex]
+
+		if s := strings.Split(repoUrl, ":"); len(s) >= 2 {
+			repoUrl = fmt.Sprintf("%s@%s", firstPart, digest)
+		} else {
+			return "", fmt.Errorf("url %s does not contain tag or digest", repoUrl)
+		}
+	}
+	return repoUrl, nil
 }
 
 // stringResource represents a resource with a string value.
