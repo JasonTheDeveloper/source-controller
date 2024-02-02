@@ -1187,6 +1187,7 @@ func TestOCIRepository_reconcileSource_verifyOCISourceSignatureNotation(t *testi
 		wantErr          bool
 		wantErrMsg       string
 		shouldSign       bool
+		useDigest        bool
 		beforeFunc       func(obj *ociv1.OCIRepository, tag, revision string)
 		assertConditions []metav1.Condition
 	}{
@@ -1264,6 +1265,21 @@ func TestOCIRepository_reconcileSource_verifyOCISourceSignatureNotation(t *testi
 			},
 			shouldSign: true,
 			insecure:   true,
+			want:       sreconcile.ResultSuccess,
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
+				*conditions.TrueCondition(sourcev1.SourceVerifiedCondition, meta.SucceededReason, "verified signature of revision <revision>"),
+			},
+		},
+		{
+			name: "signed image on an insecure registry using digest as reference passes verification",
+			reference: &ociv1.OCIRepositoryRef{
+				Tag: "6.1.6",
+			},
+			shouldSign: true,
+			insecure:   true,
+			useDigest:  true,
 			want:       sreconcile.ResultSuccess,
 			assertConditions: []metav1.Condition{
 				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
@@ -1377,6 +1393,10 @@ func TestOCIRepository_reconcileSource_verifyOCISourceSignatureNotation(t *testi
 			podinfoVersions, err := pushMultiplePodinfoImages(server.registryHost, tt.insecure, tt.reference.Tag)
 			g.Expect(err).ToNot(HaveOccurred())
 
+			if tt.useDigest {
+				obj.Spec.Reference.Digest = podinfoVersions[tt.reference.Tag].digest.String()
+			}
+
 			keychain, err := r.keychain(ctx, obj)
 			if err != nil {
 				g.Expect(err).ToNot(HaveOccurred())
@@ -1413,7 +1433,11 @@ func TestOCIRepository_reconcileSource_verifyOCISourceSignatureNotation(t *testi
 			image := podinfoVersions[tt.reference.Tag]
 			assertConditions := tt.assertConditions
 			for k := range assertConditions {
-				assertConditions[k].Message = strings.ReplaceAll(assertConditions[k].Message, "<revision>", fmt.Sprintf("%s@%s", tt.reference.Tag, image.digest.String()))
+				if tt.useDigest {
+					assertConditions[k].Message = strings.ReplaceAll(assertConditions[k].Message, "<revision>", image.digest.String())
+				} else {
+					assertConditions[k].Message = strings.ReplaceAll(assertConditions[k].Message, "<revision>", fmt.Sprintf("%s@%s", tt.reference.Tag, image.digest.String()))
+				}
 				assertConditions[k].Message = strings.ReplaceAll(assertConditions[k].Message, "<url>", artifactRef.String())
 				assertConditions[k].Message = strings.ReplaceAll(assertConditions[k].Message, "<provider>", "notation")
 			}

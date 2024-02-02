@@ -190,18 +190,24 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 		return false, err
 	}
 
-	d, err := i.Digest()
-	if err != nil {
-		return false, err
-	}
+	repoUrl := url
 
-	repoUrl := ""
+	if !strings.Contains(repoUrl, "@") {
+		d, err := i.Digest()
+		if err != nil {
+			return false, err
+		}
 
-	lastIndex := strings.LastIndex(url, ":")
-	firstPart := url[:lastIndex]
+		firstPart := ""
 
-	if s := strings.Split(url, ":"); len(s) >= 2 && !strings.Contains(url, "@") {
-		repoUrl = fmt.Sprintf("%s@%s", firstPart, d)
+		lastIndex := strings.LastIndex(url, ":")
+		if lastIndex != -1 {
+			firstPart = url[:lastIndex]
+		}
+
+		if s := strings.Split(url, ":"); len(s) >= 2 {
+			repoUrl = fmt.Sprintf("%s@%s", firstPart, d)
+		}
 	}
 
 	verififyOptions := notation.VerifyOptions{
