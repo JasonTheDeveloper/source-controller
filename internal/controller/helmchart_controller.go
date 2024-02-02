@@ -77,7 +77,7 @@ import (
 	"github.com/fluxcd/source-controller/internal/util"
 )
 
-// name of the trustpolicy file defined in the Secret containing 
+// name of the trustpolicy file defined in the Secret containing
 // notation public keys.
 const defaultTrustPolicyKey = "trustpolicy.json"
 
