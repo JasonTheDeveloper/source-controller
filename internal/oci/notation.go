@@ -131,13 +131,48 @@ func NewNotaryVerifier(opts ...Options) (*NotaryVerifier, error) {
 // It returns an error if the verification fails, nil otherwise.
 func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, error) {
 	url := ref.Name()
-	remoteRepo, err := oras.NewRepository(url)
+
+	remoteRepo, err := v.remoteRepo(url)
 	if err != nil {
 		return false, err
 	}
-	remoteRepo.PlainHTTP = v.insecure
 
 	repo := registry.NewRepository(remoteRepo)
+
+	repoUrl, err := v.repoUrlWithDigest(url, ref)
+	if err != nil {
+		return false, err
+	}
+
+	verififyOptions := notation.VerifyOptions{
+		ArtifactReference:    repoUrl,
+		MaxSignatureAttempts: 3,
+	}
+
+	_, signatures, err := notation.Verify(ctx, *v.verifier, repo, verififyOptions)
+	if err != nil {
+		return false, err
+	}
+
+	if len(signatures) == 0 {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// remoteRepo is a function that creates a remote repository object for the given repository URL.
+// It initializes the repository with the provided URL and sets the PlainHTTP flag based on the value of the 'insecure' field in the NotaryVerifier struct.
+// It also sets up the credential provider based on the authentication configuration provided in the NotaryVerifier struct.
+// If authentication is required, it retrieves the authentication credentials and sets up the repository client with the appropriate headers and credentials.
+// Finally, it returns the remote repository object and any error encountered during the process.
+func (v *NotaryVerifier) remoteRepo(repoUrl string) (*oras.Repository, error) {
+	remoteRepo, err := oras.NewRepository(repoUrl)
+	if err != nil {
+		return &oras.Repository{}, err
+	}
+
+	remoteRepo.PlainHTTP = v.insecure
 
 	credentialProvider := func(ctx context.Context, registry string) (oauth.Credential, error) {
 		return oauth.EmptyCredential, nil
@@ -148,18 +183,18 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 	if v.auth != nil {
 		auth = v.auth
 	} else if v.keychain != nil {
-		source := stringResource{url}
+		source := stringResource{repoUrl}
 
 		auth, err = v.keychain.Resolve(source)
 		if err != nil {
-			return false, err
+			return &oras.Repository{}, err
 		}
 	}
 
 	if auth != authn.Anonymous {
 		authConfig, err := auth.Authorization()
 		if err != nil {
-			return false, err
+			return &oras.Repository{}, err
 		}
 
 		credentialProvider = func(ctx context.Context, registry string) (oauth.Credential, error) {
@@ -185,26 +220,7 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 
 	remoteRepo.Client = repoClient
 
-	repoUrl, err := v.repoUrlWithDigest(url, ref)
-	if err != nil {
-		return false, err
-	}
-
-	verififyOptions := notation.VerifyOptions{
-		ArtifactReference:    repoUrl,
-		MaxSignatureAttempts: 3,
-	}
-
-	_, signatures, err := notation.Verify(ctx, *v.verifier, repo, verififyOptions)
-	if err != nil {
-		return false, err
-	}
-
-	if len(signatures) == 0 {
-		return false, nil
-	}
-
-	return true, nil
+	return remoteRepo, nil
 }
 
 // repoUrlWithDigest takes a repository URL and a reference and returns the repository URL with the digest appended to it.
