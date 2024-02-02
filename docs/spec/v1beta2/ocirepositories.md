@@ -646,6 +646,8 @@ data:
 Note that the CA certificate must have either `.pem` or `.crt` extension and your trust policy must
 be named `trustpolicy.json` for Flux to make use of them.
 
+For more information on the signing and verification process see [Signing and Verification Workflow](https://github.com/notaryproject/specifications/blob/v1.0.0/specs/signing-and-verification-workflow.md).
+
 Flux will loop over the public keys and use them to verify an artifact's signature.
 This allows for older artifacts to be valid as long as the right key is in the secret.
 
