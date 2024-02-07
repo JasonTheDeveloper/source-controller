@@ -36,6 +36,12 @@ import (
 	gcrv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/notaryproject/notation-core-go/signature/cose"
+	"github.com/notaryproject/notation-core-go/testhelper"
+	"github.com/notaryproject/notation-go"
+	"github.com/notaryproject/notation-go/registry"
+	"github.com/notaryproject/notation-go/signer"
+	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 	. "github.com/onsi/gomega"
 	coptions "github.com/sigstore/cosign/v2/cmd/cosign/cli/options"
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/sign"
@@ -65,13 +71,6 @@ import (
 	intdigest "github.com/fluxcd/source-controller/internal/digest"
 	serror "github.com/fluxcd/source-controller/internal/error"
 	sreconcile "github.com/fluxcd/source-controller/internal/reconcile"
-
-	"github.com/notaryproject/notation-core-go/signature/cose"
-	"github.com/notaryproject/notation-core-go/testhelper"
-	"github.com/notaryproject/notation-go"
-	"github.com/notaryproject/notation-go/registry"
-	"github.com/notaryproject/notation-go/signer"
-	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 )
 
 func TestOCIRepositoryReconciler_deleteBeforeFinalizer(t *testing.T) {
