@@ -1391,11 +1391,16 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 		defaultNotaryOciOpts := []soci.Options{
 			soci.WithTrustStore(&doc),
 			soci.WithNotaryRemoteOptions(verifyOpts...),
+			soci.WithNotaryAuth(clientOpts.Authenticator),
+			soci.WithNotaryKeychain(clientOpts.Keychain),
+			soci.WithInsecureRegistry(clientOpts.Insecure),
 		}
 
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryAuth(clientOpts.Authenticator), soci.WithNotaryKeychain(clientOpts.Keychain), soci.WithInsecureRegistry(clientOpts.Insecure))...)
+				verifier, err := soci.NewNotaryVerifier(append(
+					defaultNotaryOciOpts,
+					soci.WithNotaryPublicCertificate(data))...)
 				if err != nil {
 					return nil, err
 				}
