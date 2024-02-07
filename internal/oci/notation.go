@@ -27,14 +27,13 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	verifier "github.com/notaryproject/notation-go/verifier"
-	"github.com/notaryproject/notation-go/verifier/truststore"
-
 	_ "github.com/notaryproject/notation-core-go/signature/cose"
 	_ "github.com/notaryproject/notation-core-go/signature/jws"
 	"github.com/notaryproject/notation-go"
 	"github.com/notaryproject/notation-go/registry"
+	verifier "github.com/notaryproject/notation-go/verifier"
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
+	"github.com/notaryproject/notation-go/verifier/truststore"
 	oras "oras.land/oras-go/v2/registry/remote"
 	oauth "oras.land/oras-go/v2/registry/remote/auth"
 )
