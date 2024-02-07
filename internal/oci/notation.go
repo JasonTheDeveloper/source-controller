@@ -160,7 +160,7 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 		return false, err
 	}
 
-	verififyOptions := notation.VerifyOptions{
+	verifyOptions := notation.VerifyOptions{
 		ArtifactReference:    repoUrl,
 		MaxSignatureAttempts: 3,
 	}
