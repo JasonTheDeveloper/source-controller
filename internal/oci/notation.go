@@ -39,6 +39,10 @@ import (
 	oauth "oras.land/oras-go/v2/registry/remote/auth"
 )
 
+// name of the trustpolicy file defined in the Secret containing
+// notation public keys.
+const DefaultTrustPolicyKey = "trustpolicy.json"
+
 // WithInsecureRegistry sets notation to verify against insecure registry.
 func WithInsecureRegistry(insecure bool) Options {
 	return func(opts *options) {

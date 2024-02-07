@@ -700,9 +700,9 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			return err
 		}
 
-		data, ok := pubSecret.Data[defaultTrustPolicyKey]
+		data, ok := pubSecret.Data[soci.DefaultTrustPolicyKey]
 		if !ok {
-			return fmt.Errorf("'%s' not found in secret '%s'", defaultTrustPolicyKey, secretRef.Name)
+			return fmt.Errorf("'%s' not found in secret '%s'", soci.DefaultTrustPolicyKey, secretRef.Name)
 		}
 
 		var doc trustpolicy.Document

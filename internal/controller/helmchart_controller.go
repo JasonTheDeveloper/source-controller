@@ -77,10 +77,6 @@ import (
 	"github.com/fluxcd/source-controller/internal/util"
 )
 
-// name of the trustpolicy file defined in the Secret containing
-// notation public keys.
-const defaultTrustPolicyKey = "trustpolicy.json"
-
 // helmChartReadyCondition contains all the conditions information
 // needed for HelmChart Ready status conditions summary calculation.
 var helmChartReadyCondition = summarize.Conditions{
@@ -1381,9 +1377,9 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, err
 		}
 
-		data, ok := pubSecret.Data[defaultTrustPolicyKey]
+		data, ok := pubSecret.Data[soci.DefaultTrustPolicyKey]
 		if !ok {
-			return nil, fmt.Errorf("'%s' not found in secret '%s'", defaultTrustPolicyKey, secretRef.Name)
+			return nil, fmt.Errorf("'%s' not found in secret '%s'", soci.DefaultTrustPolicyKey, secretRef.Name)
 		}
 
 		var doc trustpolicy.Document
