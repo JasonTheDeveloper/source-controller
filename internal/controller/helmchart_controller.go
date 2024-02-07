@@ -1326,7 +1326,13 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 		// get the public keys from the given secret
 		if secretRef := obj.Spec.Verify.SecretRef; secretRef != nil {
-			pubSecret, certSecretName, err := r.retrieveSecret(ctx, obj.Namespace, secretRef.Name)
+
+			verifySecret := types.NamespacedName{
+				Namespace: obj.Namespace,
+				Name:      secretRef.Name,
+			}
+
+			pubSecret, err := r.retrieveSecret(ctx, verifySecret)
 			if err != nil {
 				return nil, err
 			}
@@ -1343,7 +1349,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			}
 
 			if len(verifiers) == 0 {
-				return nil, fmt.Errorf("no public keys found in secret '%s'", certSecretName)
+				return nil, fmt.Errorf("no public keys found in secret '%s'", verifySecret.String())
 			}
 			return verifiers, nil
 		}
@@ -1372,14 +1378,19 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, fmt.Errorf("verification secret cannot be empty: '%s'", obj.Name)
 		}
 
-		pubSecret, _, err := r.retrieveSecret(ctx, obj.Namespace, secretRef.Name)
+		verifySecret := types.NamespacedName{
+			Namespace: obj.Namespace,
+			Name:      secretRef.Name,
+		}
+
+		pubSecret, err := r.retrieveSecret(ctx, verifySecret)
 		if err != nil {
 			return nil, err
 		}
 
 		data, ok := pubSecret.Data[soci.DefaultTrustPolicyKey]
 		if !ok {
-			return nil, fmt.Errorf("'%s' not found in secret '%s'", soci.DefaultTrustPolicyKey, secretRef.Name)
+			return nil, fmt.Errorf("'%s' not found in secret '%s'", soci.DefaultTrustPolicyKey, verifySecret.String())
 		}
 
 		var doc trustpolicy.Document
@@ -1415,16 +1426,12 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 // retrieveSecret retrieves a secret from the specified namespace with the given secret name.
 // It returns the retrieved secret and any error encountered during the retrieval process.
-func (r *HelmChartReconciler) retrieveSecret(ctx context.Context, ns string, secretName string) (corev1.Secret, string, error) {
-	certSecretName := types.NamespacedName{
-		Namespace: ns,
-		Name:      secretName,
-	}
+func (r *HelmChartReconciler) retrieveSecret(ctx context.Context, verifySecret types.NamespacedName) (corev1.Secret, error) {
 
 	var pubSecret corev1.Secret
 
-	if err := r.Get(ctx, certSecretName, &pubSecret); err != nil {
-		return corev1.Secret{}, certSecretName.String(), err
+	if err := r.Get(ctx, verifySecret, &pubSecret); err != nil {
+		return corev1.Secret{}, err
 	}
-	return pubSecret, certSecretName.String(), nil
+	return pubSecret, nil
 }

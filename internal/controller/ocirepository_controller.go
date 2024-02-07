@@ -626,7 +626,13 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		// get the public keys from the given secret
 		if secretRef := obj.Spec.Verify.SecretRef; secretRef != nil {
-			pubSecret, err := r.retrieveSecret(ctxTimeout, obj.Namespace, secretRef.Name)
+
+			verifySecret := types.NamespacedName{
+				Namespace: obj.Namespace,
+				Name:      secretRef.Name,
+			}
+
+			pubSecret, err := r.retrieveSecret(ctxTimeout, verifySecret)
 			if err != nil {
 				return err
 			}
@@ -695,14 +701,19 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			return fmt.Errorf("verification secret cannot be empty: '%s'", ref)
 		}
 
-		pubSecret, err := r.retrieveSecret(ctxTimeout, obj.Namespace, secretRef.Name)
+		verifySecret := types.NamespacedName{
+			Namespace: obj.Namespace,
+			Name:      secretRef.Name,
+		}
+
+		pubSecret, err := r.retrieveSecret(ctxTimeout, verifySecret)
 		if err != nil {
 			return err
 		}
 
 		data, ok := pubSecret.Data[soci.DefaultTrustPolicyKey]
 		if !ok {
-			return fmt.Errorf("'%s' not found in secret '%s'", soci.DefaultTrustPolicyKey, secretRef.Name)
+			return fmt.Errorf("'%s' not found in secret '%s'", soci.DefaultTrustPolicyKey, verifySecret.String())
 		}
 
 		var doc trustpolicy.Document
@@ -751,15 +762,10 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 // retrieveSecret retrieves a secret from the specified namespace with the given secret name.
 // It returns the retrieved secret and any error encountered during the retrieval process.
-func (r *OCIRepositoryReconciler) retrieveSecret(ctx context.Context, ns string, secretName string) (corev1.Secret, error) {
-	certSecretName := types.NamespacedName{
-		Namespace: ns,
-		Name:      secretName,
-	}
-
+func (r *OCIRepositoryReconciler) retrieveSecret(ctx context.Context, verifySecret types.NamespacedName) (corev1.Secret, error) {
 	var pubSecret corev1.Secret
 
-	if err := r.Get(ctx, certSecretName, &pubSecret); err != nil {
+	if err := r.Get(ctx, verifySecret, &pubSecret); err != nil {
 		return corev1.Secret{}, err
 	}
 	return pubSecret, nil
