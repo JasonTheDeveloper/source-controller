@@ -165,7 +165,7 @@ func (v *NotaryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, 
 		MaxSignatureAttempts: 3,
 	}
 
-	_, signatures, err := notation.Verify(ctx, *v.verifier, repo, verififyOptions)
+	_, signatures, err := notation.Verify(ctx, *v.verifier, repo, verifyOptions)
 	if err != nil {
 		return false, err
 	}
