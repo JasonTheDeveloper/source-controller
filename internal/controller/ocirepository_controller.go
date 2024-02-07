@@ -692,7 +692,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 		secretRef := obj.Spec.Verify.SecretRef
 
 		if secretRef == nil {
-			return fmt.Errorf("secretRef cannot be empty: '%s'", ref)
+			return fmt.Errorf("verification secret cannot be empty: '%s'", ref)
 		}
 
 		pubSecret, err := r.retrieveSecret(ctxTimeout, obj.Namespace, secretRef.Name)

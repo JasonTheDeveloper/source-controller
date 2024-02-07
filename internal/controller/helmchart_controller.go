@@ -1369,7 +1369,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 		secretRef := obj.Spec.Verify.SecretRef
 
 		if secretRef == nil {
-			return nil, fmt.Errorf("secretRef cannot be empty: '%s'", obj.Name)
+			return nil, fmt.Errorf("verification secret cannot be empty: '%s'", obj.Name)
 		}
 
 		pubSecret, _, err := r.retrieveSecret(ctx, obj.Namespace, secretRef.Name)
