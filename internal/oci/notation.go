@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fluxcd/source-controller/internal/helm/common"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -36,8 +37,6 @@ import (
 	"github.com/notaryproject/notation-go/verifier/truststore"
 	oras "oras.land/oras-go/v2/registry/remote"
 	oauth "oras.land/oras-go/v2/registry/remote/auth"
-
-	helm_registry "github.com/fluxcd/source-controller/internal/helm/registry"
 )
 
 // name of the trustpolicy file defined in the Secret containing
@@ -204,7 +203,7 @@ func (v *NotaryVerifier) remoteRepo(repoUrl string) (*oras.Repository, error) {
 	if v.auth != nil {
 		auth = v.auth
 	} else if v.keychain != nil {
-		source := &helm_registry.StringResource{repoUrl}
+		source := common.StringResource{Registry: repoUrl}
 
 		auth, err = v.keychain.Resolve(source)
 		if err != nil {

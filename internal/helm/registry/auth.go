@@ -23,6 +23,7 @@ import (
 
 	"github.com/docker/cli/cli/config"
 	"github.com/docker/cli/cli/config/credentials"
+	"github.com/fluxcd/source-controller/internal/helm/common"
 	"github.com/fluxcd/source-controller/internal/oci"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"helm.sh/helm/v3/pkg/registry"
@@ -95,7 +96,7 @@ func KeychainAdaptHelper(keyChain authn.Keychain) func(string) (registry.LoginOp
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse registry URL '%s'", registryURL)
 		}
-		authenticator, err := keyChain.Resolve(StringResource{parsedURL.Host})
+		authenticator, err := keyChain.Resolve(common.StringResource{Registry: parsedURL.Host})
 		if err != nil {
 			return nil, fmt.Errorf("unable to resolve credentials for registry '%s': %w", registryURL, err)
 		}
