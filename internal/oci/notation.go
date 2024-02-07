@@ -36,6 +36,8 @@ import (
 	"github.com/notaryproject/notation-go/verifier/truststore"
 	oras "oras.land/oras-go/v2/registry/remote"
 	oauth "oras.land/oras-go/v2/registry/remote/auth"
+
+	helm_registry "github.com/fluxcd/source-controller/internal/helm/registry"
 )
 
 // name of the trustpolicy file defined in the Secret containing
@@ -202,7 +204,7 @@ func (v *NotaryVerifier) remoteRepo(repoUrl string) (*oras.Repository, error) {
 	if v.auth != nil {
 		auth = v.auth
 	} else if v.keychain != nil {
-		source := stringResource{repoUrl}
+		source := &helm_registry.StringResource{repoUrl}
 
 		auth, err = v.keychain.Resolve(source)
 		if err != nil {
@@ -270,20 +272,4 @@ func (v *NotaryVerifier) repoUrlWithDigest(repoUrl string, ref name.Reference) (
 		}
 	}
 	return repoUrl, nil
-}
-
-// stringResource represents a resource with a string value.
-type stringResource struct {
-	registry string
-}
-
-// String returns the string representation of the stringResource.
-func (r stringResource) String() string {
-	return r.registry
-}
-
-// RegistryStr returns the registry part of the string resource.
-// It splits the registry string by "/" and returns the first element.
-func (r stringResource) RegistryStr() string {
-	return strings.Split(r.registry, "/")[0]
 }
