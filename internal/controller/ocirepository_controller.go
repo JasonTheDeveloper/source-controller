@@ -70,6 +70,7 @@ import (
 	ociv1 "github.com/fluxcd/source-controller/api/v1beta2"
 	serror "github.com/fluxcd/source-controller/internal/error"
 	soci "github.com/fluxcd/source-controller/internal/oci"
+	scosign "github.com/fluxcd/source-controller/internal/oci/cosign"
 	"github.com/fluxcd/source-controller/internal/oci/notation"
 	sreconcile "github.com/fluxcd/source-controller/internal/reconcile"
 	"github.com/fluxcd/source-controller/internal/reconcile/summarize"
@@ -621,8 +622,8 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 	provider := obj.Spec.Verify.Provider
 	switch provider {
 	case "cosign":
-		defaultCosignOciOpts := []soci.Options{
-			soci.WithRemoteOptions(opt...),
+		defaultCosignOciOpts := []scosign.Options{
+			scosign.WithRemoteOptions(opt...),
 		}
 
 		// get the public keys from the given secret
@@ -642,7 +643,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			for k, data := range pubSecret.Data {
 				// search for public keys in the secret
 				if strings.HasSuffix(k, ".pub") {
-					verifier, err := soci.NewCosignVerifier(ctxTimeout, append(defaultCosignOciOpts, soci.WithPublicKey(data))...)
+					verifier, err := scosign.NewCosignVerifier(ctxTimeout, append(defaultCosignOciOpts, scosign.WithPublicKey(data))...)
 					if err != nil {
 						return err
 					}
@@ -676,9 +677,9 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 				SubjectRegExp: match.Subject,
 			})
 		}
-		defaultCosignOciOpts = append(defaultCosignOciOpts, soci.WithIdentities(identities))
+		defaultCosignOciOpts = append(defaultCosignOciOpts, scosign.WithIdentities(identities))
 
-		verifier, err := soci.NewCosignVerifier(ctxTimeout, defaultCosignOciOpts...)
+		verifier, err := scosign.NewCosignVerifier(ctxTimeout, defaultCosignOciOpts...)
 		if err != nil {
 			return err
 		}
@@ -735,7 +736,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := notation.NewVerifier(append(
+				verifier, err := notation.NewNotaryVerifier(append(
 					defaultNotationOciOpts,
 					notation.WithPublicCertificate(data))...)
 				if err != nil {

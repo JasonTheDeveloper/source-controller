@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package oci
+package cosign
 
 import (
 	"net/http"
@@ -75,24 +75,6 @@ func TestOptions(t *testing.T) {
 				remote.WithAuthFromKeychain(authn.DefaultKeychain),
 				remote.WithTransport(http.DefaultTransport),
 			},
-		},
-	}, {
-		name: "keychain option",
-		opts: []Options{WithNotaryKeychain(authn.DefaultKeychain)},
-		want: &options{
-			PublicKey: nil,
-			Keychain:  authn.DefaultKeychain,
-		},
-	}, {
-		name: "keychain and authenticator option",
-		opts: []Options{
-			WithNotaryAuth(&authn.Basic{Username: "foo", Password: "bar"}),
-			WithNotaryKeychain(authn.DefaultKeychain),
-		},
-		want: &options{
-			PublicKey: nil,
-			Auth:      &authn.Basic{Username: "foo", Password: "bar"},
-			Keychain:  authn.DefaultKeychain,
 		},
 	}, {
 		name: "identities option",

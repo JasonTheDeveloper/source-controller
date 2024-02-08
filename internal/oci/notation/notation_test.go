@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package oci
+package notation
 
 import (
 	"net/http"
@@ -26,7 +26,7 @@ import (
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 )
 
-func TestOptionsForNotary(t *testing.T) {
+func TestOptions(t *testing.T) {
 	testCases := []struct {
 		name string
 		opts []Options
@@ -38,7 +38,7 @@ func TestOptionsForNotary(t *testing.T) {
 		},
 		{
 			name: "signature option",
-			opts: []Options{WithNotaryPublicCertificate([]byte("foo"))},
+			opts: []Options{WithPublicCertificate([]byte("foo"))},
 			want: &options{
 				PublicKey: []byte("foo"),
 				ROpt:      nil,
@@ -47,8 +47,8 @@ func TestOptionsForNotary(t *testing.T) {
 		{
 			name: "keychain option",
 			opts: []Options{
-				WithNotaryRemoteOptions(remote.WithAuthFromKeychain(authn.DefaultKeychain)),
-				WithNotaryKeychain(authn.DefaultKeychain),
+				WithRemoteOptions(remote.WithAuthFromKeychain(authn.DefaultKeychain)),
+				WithKeychain(authn.DefaultKeychain),
 			},
 			want: &options{
 				PublicKey: nil,
@@ -59,12 +59,12 @@ func TestOptionsForNotary(t *testing.T) {
 		{
 			name: "keychain and authenticator option",
 			opts: []Options{
-				WithNotaryRemoteOptions(
+				WithRemoteOptions(
 					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
 				),
-				WithNotaryAuth(&authn.Basic{Username: "foo", Password: "bar"}),
-				WithNotaryKeychain(authn.DefaultKeychain),
+				WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
+				WithKeychain(authn.DefaultKeychain),
 			},
 			want: &options{
 				PublicKey: nil,
@@ -79,13 +79,13 @@ func TestOptionsForNotary(t *testing.T) {
 		{
 			name: "keychain, authenticator and transport option",
 			opts: []Options{
-				WithNotaryRemoteOptions(
+				WithRemoteOptions(
 					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
 					remote.WithTransport(http.DefaultTransport),
 				),
-				WithNotaryAuth(&authn.Basic{Username: "foo", Password: "bar"}),
-				WithNotaryKeychain(authn.DefaultKeychain),
+				WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
+				WithKeychain(authn.DefaultKeychain),
 			},
 			want: &options{
 				PublicKey: nil,

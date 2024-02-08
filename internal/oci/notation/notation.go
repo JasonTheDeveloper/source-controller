@@ -134,8 +134,8 @@ func (s trustStore) GetCertificates(ctx context.Context, storeType truststore.Ty
 	return certs, nil
 }
 
-// NewVerifier initializes a new Verifier
-func NewVerifier(opts ...Options) (*Verifier, error) {
+// NewNotaryVerifier initializes a new Verifier
+func NewNotaryVerifier(opts ...Options) (*Verifier, error) {
 	o := options{}
 	for _, opt := range opts {
 		opt(&o)

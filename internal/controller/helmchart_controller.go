@@ -72,6 +72,7 @@ import (
 	"github.com/fluxcd/source-controller/internal/helm/getter"
 	"github.com/fluxcd/source-controller/internal/helm/repository"
 	soci "github.com/fluxcd/source-controller/internal/oci"
+	scosign "github.com/fluxcd/source-controller/internal/oci/cosign"
 	"github.com/fluxcd/source-controller/internal/oci/notation"
 	sreconcile "github.com/fluxcd/source-controller/internal/reconcile"
 	"github.com/fluxcd/source-controller/internal/reconcile/summarize"
@@ -1321,8 +1322,8 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 	switch obj.Spec.Verify.Provider {
 	case "cosign":
-		defaultCosignOciOpts := []soci.Options{
-			soci.WithRemoteOptions(verifyOpts...),
+		defaultCosignOciOpts := []scosign.Options{
+			scosign.WithRemoteOptions(verifyOpts...),
 		}
 
 		// get the public keys from the given secret
@@ -1341,7 +1342,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			for k, data := range pubSecret.Data {
 				// search for public keys in the secret
 				if strings.HasSuffix(k, ".pub") {
-					verifier, err := soci.NewCosignVerifier(ctx, append(defaultCosignOciOpts, soci.WithPublicKey(data))...)
+					verifier, err := scosign.NewCosignVerifier(ctx, append(defaultCosignOciOpts, scosign.WithPublicKey(data))...)
 					if err != nil {
 						return nil, err
 					}
@@ -1363,9 +1364,9 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 				SubjectRegExp: match.Subject,
 			})
 		}
-		defaultCosignOciOpts = append(defaultCosignOciOpts, soci.WithIdentities(identities))
+		defaultCosignOciOpts = append(defaultCosignOciOpts, scosign.WithIdentities(identities))
 
-		verifier, err := soci.NewCosignVerifier(ctx, defaultCosignOciOpts...)
+		verifier, err := scosign.NewCosignVerifier(ctx, defaultCosignOciOpts...)
 		if err != nil {
 			return nil, err
 		}
@@ -1410,7 +1411,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := notation.NewVerifier(append(
+				verifier, err := notation.NewNotaryVerifier(append(
 					defaultNotaryOciOpts,
 					notation.WithPublicCertificate(data))...)
 				if err != nil {
