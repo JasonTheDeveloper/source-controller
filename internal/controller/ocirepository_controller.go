@@ -736,7 +736,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := notation.NewNotaryVerifier(append(
+				verifier, err := notation.NewNotationVerifier(append(
 					defaultNotationOciOpts,
 					notation.WithPublicCertificate(data))...)
 				if err != nil {

@@ -105,8 +105,8 @@ func WithKeychain(key authn.Keychain) Options {
 	}
 }
 
-// NotatryVerifier is a struct which is responsible for executing verification logic
-type NotatryVerifier struct {
+// NotationVerifier is a struct which is responsible for executing verification logic
+type NotationVerifier struct {
 	auth     authn.Authenticator
 	keychain authn.Keychain
 	verifier *notation.Verifier
@@ -134,8 +134,8 @@ func (s trustStore) GetCertificates(ctx context.Context, storeType truststore.Ty
 	return certs, nil
 }
 
-// NewNotaryVerifier initializes a new Verifier
-func NewNotaryVerifier(opts ...Options) (*NotatryVerifier, error) {
+// NewNotationVerifier initializes a new Verifier
+func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 	o := options{}
 	for _, opt := range opts {
 		opt(&o)
@@ -150,7 +150,7 @@ func NewNotaryVerifier(opts ...Options) (*NotatryVerifier, error) {
 		return nil, err
 	}
 
-	return &NotatryVerifier{
+	return &NotationVerifier{
 		auth:     o.Auth,
 		keychain: o.Keychain,
 		verifier: &verifier,
@@ -162,7 +162,7 @@ func NewNotaryVerifier(opts ...Options) (*NotatryVerifier, error) {
 // Verify verifies the authenticity of the given ref OCI image.
 // It returns a boolean indicating if the verification was successful.
 // It returns an error if the verification fails, nil otherwise.
-func (v *NotatryVerifier) Verify(ctx context.Context, ref name.Reference) (bool, error) {
+func (v *NotationVerifier) Verify(ctx context.Context, ref name.Reference) (bool, error) {
 	url := ref.Name()
 
 	remoteRepo, err := v.remoteRepo(url)
@@ -199,7 +199,7 @@ func (v *NotatryVerifier) Verify(ctx context.Context, ref name.Reference) (bool,
 // It also sets up the credential provider based on the authentication configuration provided in the Verifier struct.
 // If authentication is required, it retrieves the authentication credentials and sets up the repository client with the appropriate headers and credentials.
 // Finally, it returns the remote repository object and any error encountered during the process.
-func (v *NotatryVerifier) remoteRepo(repoUrl string) (*oras.Repository, error) {
+func (v *NotationVerifier) remoteRepo(repoUrl string) (*oras.Repository, error) {
 	remoteRepo, err := oras.NewRepository(repoUrl)
 	if err != nil {
 		return &oras.Repository{}, err
@@ -258,7 +258,7 @@ func (v *NotatryVerifier) remoteRepo(repoUrl string) (*oras.Repository, error) {
 
 // repoUrlWithDigest takes a repository URL and a reference and returns the repository URL with the digest appended to it.
 // If the repository URL does not contain a tag or digest, it returns an error.
-func (v *NotatryVerifier) repoUrlWithDigest(repoUrl string, ref name.Reference) (string, error) {
+func (v *NotationVerifier) repoUrlWithDigest(repoUrl string, ref name.Reference) (string, error) {
 	if !strings.Contains(repoUrl, "@") {
 		image, err := remote.Image(ref, v.opts...)
 		if err != nil {
