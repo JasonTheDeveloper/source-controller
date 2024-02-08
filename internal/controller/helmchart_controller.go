@@ -72,6 +72,7 @@ import (
 	"github.com/fluxcd/source-controller/internal/helm/getter"
 	"github.com/fluxcd/source-controller/internal/helm/repository"
 	soci "github.com/fluxcd/source-controller/internal/oci"
+	"github.com/fluxcd/source-controller/internal/oci/notation"
 	sreconcile "github.com/fluxcd/source-controller/internal/reconcile"
 	"github.com/fluxcd/source-controller/internal/reconcile/summarize"
 	"github.com/fluxcd/source-controller/internal/util"
@@ -1388,9 +1389,9 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, err
 		}
 
-		data, ok := pubSecret.Data[soci.DefaultTrustPolicyKey]
+		data, ok := pubSecret.Data[notation.DefaultTrustPolicyKey]
 		if !ok {
-			return nil, fmt.Errorf("'%s' not found in secret '%s'", soci.DefaultTrustPolicyKey, verifySecret.String())
+			return nil, fmt.Errorf("'%s' not found in secret '%s'", notation.DefaultTrustPolicyKey, verifySecret.String())
 		}
 
 		var doc trustpolicy.Document
@@ -1399,19 +1400,19 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, err
 		}
 
-		defaultNotaryOciOpts := []soci.Options{
-			soci.WithTrustStore(&doc),
-			soci.WithNotaryRemoteOptions(verifyOpts...),
-			soci.WithNotaryAuth(clientOpts.Authenticator),
-			soci.WithNotaryKeychain(clientOpts.Keychain),
-			soci.WithInsecureRegistry(clientOpts.Insecure),
+		defaultNotaryOciOpts := []notation.Options{
+			notation.WithTrustStore(&doc),
+			notation.WithRemoteOptions(verifyOpts...),
+			notation.WithAuth(clientOpts.Authenticator),
+			notation.WithKeychain(clientOpts.Keychain),
+			notation.WithInsecureRegistry(clientOpts.Insecure),
 		}
 
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := soci.NewNotaryVerifier(append(
+				verifier, err := notation.NewVerifier(append(
 					defaultNotaryOciOpts,
-					soci.WithNotaryPublicCertificate(data))...)
+					notation.WithPublicCertificate(data))...)
 				if err != nil {
 					return nil, err
 				}

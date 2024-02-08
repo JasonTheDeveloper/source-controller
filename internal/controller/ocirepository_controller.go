@@ -70,6 +70,7 @@ import (
 	ociv1 "github.com/fluxcd/source-controller/api/v1beta2"
 	serror "github.com/fluxcd/source-controller/internal/error"
 	soci "github.com/fluxcd/source-controller/internal/oci"
+	"github.com/fluxcd/source-controller/internal/oci/notation"
 	sreconcile "github.com/fluxcd/source-controller/internal/reconcile"
 	"github.com/fluxcd/source-controller/internal/reconcile/summarize"
 	"github.com/fluxcd/source-controller/internal/tls"
@@ -711,9 +712,9 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			return err
 		}
 
-		data, ok := pubSecret.Data[soci.DefaultTrustPolicyKey]
+		data, ok := pubSecret.Data[notation.DefaultTrustPolicyKey]
 		if !ok {
-			return fmt.Errorf("'%s' not found in secret '%s'", soci.DefaultTrustPolicyKey, verifySecret.String())
+			return fmt.Errorf("'%s' not found in secret '%s'", notation.DefaultTrustPolicyKey, verifySecret.String())
 		}
 
 		var doc trustpolicy.Document
@@ -724,19 +725,19 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		signatureVerified := false
 
-		defaultNotaryOciOpts := []soci.Options{
-			soci.WithTrustStore(&doc),
-			soci.WithNotaryRemoteOptions(opt...),
-			soci.WithNotaryAuth(auth),
-			soci.WithNotaryKeychain(keychain),
-			soci.WithInsecureRegistry(obj.Spec.Insecure),
+		defaultNotationOciOpts := []notation.Options{
+			notation.WithTrustStore(&doc),
+			notation.WithRemoteOptions(opt...),
+			notation.WithAuth(auth),
+			notation.WithKeychain(keychain),
+			notation.WithInsecureRegistry(obj.Spec.Insecure),
 		}
 
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := soci.NewNotaryVerifier(append(
-					defaultNotaryOciOpts,
-					soci.WithNotaryPublicCertificate(data))...)
+				verifier, err := notation.NewVerifier(append(
+					defaultNotationOciOpts,
+					notation.WithPublicCertificate(data))...)
 				if err != nil {
 					return err
 				}
