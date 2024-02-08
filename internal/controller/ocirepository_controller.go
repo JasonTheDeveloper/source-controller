@@ -727,11 +727,16 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 		defaultNotaryOciOpts := []soci.Options{
 			soci.WithTrustStore(&doc),
 			soci.WithNotaryRemoteOptions(opt...),
+			soci.WithNotaryAuth(auth),
+			soci.WithNotaryKeychain(keychain),
+			soci.WithInsecureRegistry(obj.Spec.Insecure),
 		}
 
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := soci.NewNotaryVerifier(append(defaultNotaryOciOpts, soci.WithNotaryPublicCertificate(data), soci.WithNotaryAuth(auth), soci.WithNotaryKeychain(keychain), soci.WithInsecureRegistry(obj.Spec.Insecure))...)
+				verifier, err := soci.NewNotaryVerifier(append(
+					defaultNotaryOciOpts,
+					soci.WithNotaryPublicCertificate(data))...)
 				if err != nil {
 					return err
 				}
