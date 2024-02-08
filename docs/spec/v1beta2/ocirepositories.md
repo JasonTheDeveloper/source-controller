@@ -617,7 +617,7 @@ spec:
   verify:
     provider: notation
     secretRef:
-      name: notation-public-keys
+      name: notation-config
 ```
 
 When the verification succeeds, the controller adds a Condition with the
@@ -635,7 +635,7 @@ with the Notation CA certificate and trust policy:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: notation-public-keys
+  name: notation-config
 type: Opaque
 data:
   certificate1.pem: <BASE64>
