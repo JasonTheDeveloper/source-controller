@@ -36,6 +36,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	gcrv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	notationgo "github.com/notaryproject/notation-go"
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 	"github.com/sigstore/cosign/v2/pkg/cosign"
 	corev1 "k8s.io/api/core/v1"
@@ -734,6 +735,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			notation.WithInsecureRegistry(obj.Spec.Insecure),
 		}
 
+		sigRetErr := []error{}
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
 				verifier, err := notation.NewNotationVerifier(append(
@@ -745,6 +747,9 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 				signatures, err := verifier.Verify(ctxTimeout, ref)
 				if err != nil {
+					if errors.As(err, &notationgo.ErrorSignatureRetrievalFailed{}) {
+						sigRetErr = append(sigRetErr, err)
+					}
 					r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
 						"notation validation failed for '%s' with message: %s", ref, err)
 					continue
@@ -758,6 +763,9 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 		}
 
 		if !signatureVerified {
+			if len(sigRetErr) > 0 {
+				return errors.Join(sigRetErr...)
+			}
 			return fmt.Errorf("no matching signatures were found for '%s'", ref)
 		}
 
