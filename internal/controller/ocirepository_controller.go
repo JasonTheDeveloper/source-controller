@@ -438,7 +438,7 @@ func (r *OCIRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 		err := r.verifySignature(ctx, obj, ref, keychain, auth, opts...)
 		if err != nil {
 			provider := obj.Spec.Verify.Provider
-			if obj.Spec.Verify.SecretRef == nil {
+			if obj.Spec.Verify.SecretRef == nil && obj.Spec.Verify.Provider == "cosign" {
 				provider = fmt.Sprintf("%s keyless", provider)
 			}
 			e := serror.NewGeneric(

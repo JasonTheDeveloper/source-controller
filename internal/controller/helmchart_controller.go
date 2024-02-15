@@ -583,7 +583,7 @@ func (r *HelmChartReconciler) buildFromHelmRepository(ctx context.Context, obj *
 			provider := obj.Spec.Verify.Provider
 			verifiers, err = r.makeVerifiers(ctx, obj, *clientOpts)
 			if err != nil {
-				if obj.Spec.Verify.SecretRef == nil {
+				if obj.Spec.Verify.SecretRef == nil && obj.Spec.Verify.Provider == "cosign" {
 					provider = fmt.Sprintf("%s keyless", provider)
 				}
 				e := serror.NewGeneric(
