@@ -7,7 +7,7 @@ spec:
   interval: 5m
   url: oci://ghcr.io/stefanprodan/podinfo-deploy
   ref:
-    semver: "6.5.x"
+    semver: "6.6.x"
   verify:
     provider: notation
     secretRef:
