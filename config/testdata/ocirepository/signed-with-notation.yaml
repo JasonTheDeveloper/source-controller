@@ -5,7 +5,7 @@ metadata:
   name: podinfo-deploy-signed-with-notation
 spec:
   interval: 5m
-  url: oci://ghcr.io/jasonthedeveloper/podinfo-deploy
+  url: oci://ghcr.io/stefanprodan/podinfo-deploy
   ref:
     semver: "6.5.x"
   verify:

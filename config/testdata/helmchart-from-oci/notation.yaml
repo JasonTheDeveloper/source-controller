@@ -4,7 +4,7 @@ kind: HelmRepository
 metadata:
   name: podinfo-notation
 spec:
-  url: oci://ghcr.io/jasonthedeveloper/charts
+  url: oci://ghcr.io/stefanprodan/charts
   type: "oci"
   interval: 1m
 ---
