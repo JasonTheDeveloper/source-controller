@@ -382,7 +382,7 @@ func (r *OCIChartRepository) VerifyChart(ctx context.Context, chart *repo.ChartV
 	for _, verifier := range r.verifiers {
 		if verified, err := verifier.Verify(ctx, ref); err != nil {
 			return fmt.Errorf("failed to verify %s: %w", chart.URLs[0], err)
-		} else if verified {
+		} else if verified != oci.VerificationResultFailed {
 			return nil
 		}
 	}

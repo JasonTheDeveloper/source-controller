@@ -22,7 +22,15 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 )
 
+type VerificationResult string
+
+const (
+	VerificationResultSuccess VerificationResult = "verified"
+	VerificationResultFailed  VerificationResult = "unverified"
+	VerificationResultIgnored VerificationResult = "ignored"
+)
+
 // Verifier is an interface for verifying the authenticity of an OCI image.
 type Verifier interface {
-	Verify(ctx context.Context, ref name.Reference) (bool, error)
+	Verify(ctx context.Context, ref name.Reference) (VerificationResult, error)
 }

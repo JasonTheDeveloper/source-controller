@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/fluxcd/source-controller/internal/helm/common"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -37,6 +36,9 @@ import (
 	"github.com/notaryproject/notation-go/verifier/truststore"
 	oras "oras.land/oras-go/v2/registry/remote"
 	oauth "oras.land/oras-go/v2/registry/remote/auth"
+
+	"github.com/fluxcd/source-controller/internal/helm/common"
+	"github.com/fluxcd/source-controller/internal/oci"
 )
 
 // name of the trustpolicy file defined in the Secret containing
@@ -162,19 +164,19 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 // Verify verifies the authenticity of the given ref OCI image.
 // It returns a boolean indicating if the verification was successful.
 // It returns an error if the verification fails, nil otherwise.
-func (v *NotationVerifier) Verify(ctx context.Context, ref name.Reference) (bool, error) {
+func (v *NotationVerifier) Verify(ctx context.Context, ref name.Reference) (oci.VerificationResult, error) {
 	url := ref.Name()
 
 	remoteRepo, err := v.remoteRepo(url)
 	if err != nil {
-		return false, err
+		return oci.VerificationResultFailed, err
 	}
 
 	repo := registry.NewRepository(remoteRepo)
 
 	repoUrl, err := v.repoUrlWithDigest(url, ref)
 	if err != nil {
-		return false, err
+		return oci.VerificationResultFailed, err
 	}
 
 	verifyOptions := notation.VerifyOptions{
@@ -182,16 +184,28 @@ func (v *NotationVerifier) Verify(ctx context.Context, ref name.Reference) (bool
 		MaxSignatureAttempts: 3,
 	}
 
-	_, signatures, err := notation.Verify(ctx, *v.verifier, repo, verifyOptions)
+	_, outcomes, err := notation.Verify(ctx, *v.verifier, repo, verifyOptions)
 	if err != nil {
-		return false, err
+		return oci.VerificationResultFailed, err
 	}
 
-	if len(signatures) == 0 {
-		return false, nil
+	if len(outcomes) == 0 {
+		return oci.VerificationResultFailed, fmt.Errorf("signature verification failed for all the signatures associated with %s", url)
 	}
 
-	return true, nil
+	outcome := outcomes[0]
+
+	if outcome.VerificationLevel == trustpolicy.LevelSkip {
+		return oci.VerificationResultIgnored, nil
+	}
+
+	for _, i := range outcome.VerificationResults {
+		if i.Type == trustpolicy.TypeAuthenticity && i.Error != nil {
+			return oci.VerificationResultIgnored, i.Error
+		}
+	}
+
+	return oci.VerificationResultSuccess, nil
 }
 
 // remoteRepo is a function that creates a remote repository object for the given repository URL.

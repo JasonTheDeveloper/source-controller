@@ -435,21 +435,33 @@ func (r *OCIRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 		conditions.GetObservedGeneration(obj, sourcev1.SourceVerifiedCondition) != obj.Generation ||
 		conditions.IsFalse(obj, sourcev1.SourceVerifiedCondition) {
 
-		err := r.verifySignature(ctx, obj, ref, keychain, auth, opts...)
+		result, err := r.verifySignature(ctx, obj, ref, keychain, auth, opts...)
 		if err != nil {
-			provider := obj.Spec.Verify.Provider
-			if obj.Spec.Verify.SecretRef == nil && obj.Spec.Verify.Provider == "cosign" {
-				provider = fmt.Sprintf("%s keyless", provider)
+			if result == soci.VerificationResultFailed {
+				provider := obj.Spec.Verify.Provider
+				if obj.Spec.Verify.SecretRef == nil && obj.Spec.Verify.Provider == "cosign" {
+					provider = fmt.Sprintf("%s keyless", provider)
+				}
+				e := serror.NewGeneric(
+					fmt.Errorf("failed to verify the signature using provider '%s': %w", provider, err),
+					sourcev1.VerificationError,
+				)
+				conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, e.Reason, e.Err.Error())
+				return sreconcile.ResultEmpty, e
 			}
-			e := serror.NewGeneric(
-				fmt.Errorf("failed to verify the signature using provider '%s': %w", provider, err),
-				sourcev1.VerificationError,
-			)
-			conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, e.Reason, e.Err.Error())
-			return sreconcile.ResultEmpty, e
+
+			if result == soci.VerificationResultIgnored {
+				r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
+					"notation validation ignored action for '%s' with message: %s", ref, err)
+			}
+		} else if result == soci.VerificationResultIgnored {
+			r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
+				"notation validation ignored action for '%s'", ref)
 		}
 
-		conditions.MarkTrue(obj, sourcev1.SourceVerifiedCondition, meta.SucceededReason, "verified signature of revision %s", revision)
+		if result == soci.VerificationResultSuccess {
+			conditions.MarkTrue(obj, sourcev1.SourceVerifiedCondition, meta.SucceededReason, "verified signature of revision %s", revision)
+		}
 	}
 
 	// Skip pulling if the artifact revision and the source configuration has
@@ -616,7 +628,7 @@ func (r *OCIRepositoryReconciler) digestFromRevision(revision string) string {
 // verifySignature verifies the authenticity of the given image reference URL.
 // First, it tries to use a key if a Secret with a valid public key is provided.
 // If not, it falls back to a keyless approach for verification.
-func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv1.OCIRepository, ref name.Reference, keychain authn.Keychain, auth authn.Authenticator, opt ...remote.Option) error {
+func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv1.OCIRepository, ref name.Reference, keychain authn.Keychain, auth authn.Authenticator, opt ...remote.Option) (soci.VerificationResult, error) {
 	ctxTimeout, cancel := context.WithTimeout(ctx, obj.Spec.Timeout.Duration)
 	defer cancel()
 
@@ -637,7 +649,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 			pubSecret, err := r.retrieveSecret(ctxTimeout, verifySecret)
 			if err != nil {
-				return err
+				return soci.VerificationResultFailed, err
 			}
 
 			signatureVerified := false
@@ -646,7 +658,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 				if strings.HasSuffix(k, ".pub") {
 					verifier, err := scosign.NewCosignVerifier(ctxTimeout, append(defaultCosignOciOpts, scosign.WithPublicKey(data))...)
 					if err != nil {
-						return err
+						return soci.VerificationResultFailed, err
 					}
 
 					signatures, _, err := verifier.VerifyImageSignatures(ctxTimeout, ref)
@@ -662,10 +674,10 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			}
 
 			if !signatureVerified {
-				return fmt.Errorf("no matching signatures were found for '%s'", ref)
+				return soci.VerificationResultFailed, fmt.Errorf("no matching signatures were found for '%s'", ref)
 			}
 
-			return nil
+			return soci.VerificationResultSuccess, nil
 		}
 
 		// if no secret is provided, try keyless verification
@@ -682,26 +694,26 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		verifier, err := scosign.NewCosignVerifier(ctxTimeout, defaultCosignOciOpts...)
 		if err != nil {
-			return err
+			return soci.VerificationResultFailed, err
 		}
 
 		signatures, _, err := verifier.VerifyImageSignatures(ctxTimeout, ref)
 		if err != nil {
-			return err
+			return soci.VerificationResultFailed, err
 		}
 
 		if len(signatures) > 0 {
-			return nil
+			return soci.VerificationResultSuccess, nil
 		}
 
-		return fmt.Errorf("no matching signatures were found for '%s'", ref)
+		return soci.VerificationResultFailed, fmt.Errorf("no matching signatures were found for '%s'", ref)
 
 	case "notation":
 		// get the public keys from the given secret
 		secretRef := obj.Spec.Verify.SecretRef
 
 		if secretRef == nil {
-			return fmt.Errorf("verification secret cannot be empty: '%s'", ref)
+			return soci.VerificationResultFailed, fmt.Errorf("verification secret cannot be empty: '%s'", ref)
 		}
 
 		verifySecret := types.NamespacedName{
@@ -711,21 +723,21 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		pubSecret, err := r.retrieveSecret(ctxTimeout, verifySecret)
 		if err != nil {
-			return err
+			return soci.VerificationResultFailed, err
 		}
 
 		data, ok := pubSecret.Data[notation.DefaultTrustPolicyKey]
 		if !ok {
-			return fmt.Errorf("'%s' not found in secret '%s'", notation.DefaultTrustPolicyKey, verifySecret.String())
+			return soci.VerificationResultFailed, fmt.Errorf("'%s' not found in secret '%s'", notation.DefaultTrustPolicyKey, verifySecret.String())
 		}
 
 		var doc trustpolicy.Document
 
 		if err := json.Unmarshal(data, &doc); err != nil {
-			return err
+			return soci.VerificationResultFailed, err
 		}
 
-		signatureVerified := false
+		verifiedResult := soci.VerificationResultFailed
 
 		defaultNotationOciOpts := []notation.Options{
 			notation.WithTrustStore(&doc),
@@ -735,44 +747,38 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			notation.WithInsecureRegistry(obj.Spec.Insecure),
 		}
 
-		sigRetErr := []error{}
 		for k, data := range pubSecret.Data {
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
 				verifier, err := notation.NewNotationVerifier(append(
 					defaultNotationOciOpts,
 					notation.WithPublicCertificate(data))...)
 				if err != nil {
-					return err
+					return soci.VerificationResultFailed, err
 				}
 
-				signatures, err := verifier.Verify(ctxTimeout, ref)
+				result, err := verifier.Verify(ctxTimeout, ref)
 				if err != nil {
 					if errors.As(err, &notationgo.ErrorSignatureRetrievalFailed{}) {
-						sigRetErr = append(sigRetErr, err)
+						continue
 					}
-					r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
-						"notation validation failed for '%s' with message: %s", ref, err)
-					continue
+					return result, err
 				}
 
-				if signatures {
-					signatureVerified = true
+				if result != soci.VerificationResultFailed {
+					verifiedResult = result
 					break
 				}
 			}
 		}
 
-		if !signatureVerified {
-			if len(sigRetErr) > 0 {
-				return errors.Join(sigRetErr...)
-			}
-			return fmt.Errorf("no matching signatures were found for '%s'", ref)
+		if verifiedResult == soci.VerificationResultFailed {
+			return soci.VerificationResultFailed, fmt.Errorf("no matching signatures were found for '%s'", ref)
 		}
 
-		return nil
+		return verifiedResult, nil
 	}
 
-	return nil
+	return soci.VerificationResultSuccess, nil
 }
 
 // retrieveSecret retrieves a secret from the specified namespace with the given secret name.

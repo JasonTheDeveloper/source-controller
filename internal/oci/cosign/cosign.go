@@ -31,6 +31,8 @@ import (
 	ociremote "github.com/sigstore/cosign/v2/pkg/oci/remote"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/signature"
+
+	soci "github.com/fluxcd/source-controller/internal/oci"
 )
 
 // options is a struct that holds options for verifier.
@@ -152,15 +154,15 @@ func (v *CosignVerifier) VerifyImageSignatures(ctx context.Context, ref name.Ref
 // Verify verifies the authenticity of the given ref OCI image.
 // It returns a boolean indicating if the verification was successful.
 // It returns an error if the verification fails, nil otherwise.
-func (v *CosignVerifier) Verify(ctx context.Context, ref name.Reference) (bool, error) {
+func (v *CosignVerifier) Verify(ctx context.Context, ref name.Reference) (soci.VerificationResult, error) {
 	signatures, _, err := v.VerifyImageSignatures(ctx, ref)
 	if err != nil {
-		return false, err
+		return soci.VerificationResultFailed, err
 	}
 
 	if len(signatures) == 0 {
-		return false, nil
+		return soci.VerificationResultFailed, nil
 	}
 
-	return true, nil
+	return soci.VerificationResultSuccess, nil
 }
