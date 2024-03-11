@@ -48,13 +48,13 @@ const DefaultTrustPolicyKey = "trustpolicy.json"
 
 // options is a struct that holds options for verifier.
 type options struct {
-	PublicKey   []byte
-	ROpt        []remote.Option
-	TrustPolicy *trustpolicy.Document
-	Auth        authn.Authenticator
-	Keychain    authn.Keychain
-	Insecure    bool
-	Logger      logr.Logger
+	RootCertificate []byte
+	ROpt            []remote.Option
+	TrustPolicy     *trustpolicy.Document
+	Auth            authn.Authenticator
+	Keychain        authn.Keychain
+	Insecure        bool
+	Logger          logr.Logger
 }
 
 // Options is a function that configures the options applied to a Verifier.
@@ -74,14 +74,14 @@ func WithTrustStore(trustStore *trustpolicy.Document) Options {
 	}
 }
 
-// WithPublicCertificate is a function that creates a NotationOptions function option
-// to set the public certificate for notary.
+// WithRootCertificate is a function that creates a NotationOptions function option
+// to set the root CA certificate for notary.
 // It takes in the certificate data as a byte slice and the name of the certificate.
 // The function returns a NotationOptions function option that sets the public certificate
 // in the notation options.
-func WithPublicCertificate(data []byte) Options {
+func WithRootCertificate(data []byte) Options {
 	return func(opts *options) {
-		opts.PublicKey = data
+		opts.RootCertificate = data
 	}
 }
 
@@ -155,7 +155,7 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 	}
 
 	store := &trustStore{
-		cert: o.PublicKey,
+		cert: o.RootCertificate,
 	}
 
 	verifier, err := verifier.New(o.TrustPolicy, store, nil)

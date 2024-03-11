@@ -38,10 +38,10 @@ func TestOptions(t *testing.T) {
 		},
 		{
 			name: "signature option",
-			opts: []Options{WithPublicCertificate([]byte("foo"))},
+			opts: []Options{WithRootCertificate([]byte("foo"))},
 			want: &options{
-				PublicKey: []byte("foo"),
-				ROpt:      nil,
+				RootCertificate: []byte("foo"),
+				ROpt:            nil,
 			},
 		},
 		{
@@ -51,9 +51,9 @@ func TestOptions(t *testing.T) {
 				WithKeychain(authn.DefaultKeychain),
 			},
 			want: &options{
-				PublicKey: nil,
-				ROpt:      []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)},
-				Keychain:  authn.DefaultKeychain,
+				RootCertificate: nil,
+				ROpt:            []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)},
+				Keychain:        authn.DefaultKeychain,
 			},
 		},
 		{
@@ -67,7 +67,7 @@ func TestOptions(t *testing.T) {
 				WithKeychain(authn.DefaultKeychain),
 			},
 			want: &options{
-				PublicKey: nil,
+				RootCertificate: nil,
 				ROpt: []remote.Option{
 					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
@@ -88,7 +88,7 @@ func TestOptions(t *testing.T) {
 				WithKeychain(authn.DefaultKeychain),
 			},
 			want: &options{
-				PublicKey: nil,
+				RootCertificate: nil,
 				ROpt: []remote.Option{
 					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
@@ -102,48 +102,48 @@ func TestOptions(t *testing.T) {
 			name: "truststore, empty document",
 			opts: []Options{WithTrustStore(&trustpolicy.Document{})},
 			want: &options{
-				PublicKey:   nil,
-				ROpt:        nil,
-				TrustPolicy: &trustpolicy.Document{},
+				RootCertificate: nil,
+				ROpt:            nil,
+				TrustPolicy:     &trustpolicy.Document{},
 			},
 		},
 		{
 			name: "truststore, dummy document",
 			opts: []Options{WithTrustStore(dummyPolicyDocument())},
 			want: &options{
-				PublicKey:   nil,
-				ROpt:        nil,
-				TrustPolicy: dummyPolicyDocument(),
+				RootCertificate: nil,
+				ROpt:            nil,
+				TrustPolicy:     dummyPolicyDocument(),
 			},
 		},
 		{
 			name: "insecure, false",
 			opts: []Options{WithInsecureRegistry(false)},
 			want: &options{
-				PublicKey:   nil,
-				ROpt:        nil,
-				TrustPolicy: nil,
-				Insecure:    false,
+				RootCertificate: nil,
+				ROpt:            nil,
+				TrustPolicy:     nil,
+				Insecure:        false,
 			},
 		},
 		{
 			name: "insecure, true",
 			opts: []Options{WithInsecureRegistry(true)},
 			want: &options{
-				PublicKey:   nil,
-				ROpt:        nil,
-				TrustPolicy: nil,
-				Insecure:    true,
+				RootCertificate: nil,
+				ROpt:            nil,
+				TrustPolicy:     nil,
+				Insecure:        true,
 			},
 		},
 		{
 			name: "insecure, default",
 			opts: []Options{},
 			want: &options{
-				PublicKey:   nil,
-				ROpt:        nil,
-				TrustPolicy: nil,
-				Insecure:    false,
+				RootCertificate: nil,
+				ROpt:            nil,
+				TrustPolicy:     nil,
+				Insecure:        false,
 			},
 		},
 	}
@@ -155,8 +155,8 @@ func TestOptions(t *testing.T) {
 			for _, opt := range tc.opts {
 				opt(&o)
 			}
-			if !reflect.DeepEqual(o.PublicKey, tc.want.PublicKey) {
-				t.Errorf("got %#v, want %#v", &o.PublicKey, tc.want.PublicKey)
+			if !reflect.DeepEqual(o.RootCertificate, tc.want.RootCertificate) {
+				t.Errorf("got %#v, want %#v", &o.RootCertificate, tc.want.RootCertificate)
 			}
 
 			if !reflect.DeepEqual(o.TrustPolicy, tc.want.TrustPolicy) {

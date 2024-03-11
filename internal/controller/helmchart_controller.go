@@ -1414,7 +1414,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
 				verifier, err := notation.NewNotationVerifier(append(
 					defaultNotaryOciOpts,
-					notation.WithPublicCertificate(data))...)
+					notation.WithRootCertificate(data))...)
 				if err != nil {
 					return nil, err
 				}

@@ -752,7 +752,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
 				verifier, err := notation.NewNotationVerifier(append(
 					defaultNotationOciOpts,
-					notation.WithPublicCertificate(data))...)
+					notation.WithRootCertificate(data))...)
 				if err != nil {
 					return soci.VerificationResultFailed, err
 				}
