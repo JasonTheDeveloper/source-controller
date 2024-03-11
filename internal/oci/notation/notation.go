@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-logr/logr"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -53,6 +54,7 @@ type options struct {
 	Auth        authn.Authenticator
 	Keychain    authn.Keychain
 	Insecure    bool
+	Logger      logr.Logger
 }
 
 // Options is a function that configures the options applied to a Verifier.
@@ -107,6 +109,14 @@ func WithKeychain(key authn.Keychain) Options {
 	}
 }
 
+// WithLogger is a function that returns an Options function to set the logger for the options.
+// The logger is used for logging purposes within the options.
+func WithLogger(logger logr.Logger) Options {
+	return func(o *options) {
+		o.Logger = logger
+	}
+}
+
 // NotationVerifier is a struct which is responsible for executing verification logic
 type NotationVerifier struct {
 	auth     authn.Authenticator
@@ -114,6 +124,7 @@ type NotationVerifier struct {
 	verifier *notation.Verifier
 	opts     []remote.Option
 	insecure bool
+	logger   logr.Logger
 }
 
 type trustStore struct {
@@ -158,6 +169,7 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 		verifier: &verifier,
 		opts:     o.ROpt,
 		insecure: o.Insecure,
+		logger:   o.Logger,
 	}, nil
 }
 
@@ -200,8 +212,14 @@ func (v *NotationVerifier) Verify(ctx context.Context, ref name.Reference) (oci.
 	}
 
 	for _, i := range outcome.VerificationResults {
-		if i.Type == trustpolicy.TypeAuthenticity && i.Error != nil {
-			return oci.VerificationResultIgnored, i.Error
+		if i.Error != nil {
+			if i.Type == trustpolicy.TypeAuthenticity {
+				return oci.VerificationResultIgnored, i.Error
+			}
+
+			if i.Action == trustpolicy.ActionLog {
+				v.logger.Info(fmt.Sprintf("verification check for type %s failed for %s with message %s", i.Type, url, i.Error.Error()))
+			}
 		}
 	}
 

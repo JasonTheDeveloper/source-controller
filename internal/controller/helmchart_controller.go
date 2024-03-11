@@ -1407,6 +1407,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			notation.WithAuth(clientOpts.Authenticator),
 			notation.WithKeychain(clientOpts.Keychain),
 			notation.WithInsecureRegistry(clientOpts.Insecure),
+			notation.WithLogger(ctrl.LoggerFrom(ctx)),
 		}
 
 		for k, data := range pubSecret.Data {

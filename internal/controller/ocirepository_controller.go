@@ -745,6 +745,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			notation.WithAuth(auth),
 			notation.WithKeychain(keychain),
 			notation.WithInsecureRegistry(obj.Spec.Insecure),
+			notation.WithLogger(ctrl.LoggerFrom(ctx)),
 		}
 
 		for k, data := range pubSecret.Data {
