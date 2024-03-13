@@ -42,8 +42,8 @@ func TestOptions(t *testing.T) {
 			name: "signature option",
 			opts: []Options{WithRootCertificate([]byte("foo"))},
 			want: &options{
-				RootCertificate: []byte("foo"),
-				ROpt:            nil,
+				rootCertificate: []byte("foo"),
+				rOpt:            nil,
 			},
 		},
 		{
@@ -53,9 +53,9 @@ func TestOptions(t *testing.T) {
 				WithKeychain(authn.DefaultKeychain),
 			},
 			want: &options{
-				RootCertificate: nil,
-				ROpt:            []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)},
-				Keychain:        authn.DefaultKeychain,
+				rootCertificate: nil,
+				rOpt:            []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)},
+				keychain:        authn.DefaultKeychain,
 			},
 		},
 		{
@@ -69,13 +69,13 @@ func TestOptions(t *testing.T) {
 				WithKeychain(authn.DefaultKeychain),
 			},
 			want: &options{
-				RootCertificate: nil,
-				ROpt: []remote.Option{
+				rootCertificate: nil,
+				rOpt: []remote.Option{
 					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
 				},
-				Auth:     &authn.Basic{Username: "foo", Password: "bar"},
-				Keychain: authn.DefaultKeychain,
+				auth:     &authn.Basic{Username: "foo", Password: "bar"},
+				keychain: authn.DefaultKeychain,
 			},
 		},
 		{
@@ -90,62 +90,62 @@ func TestOptions(t *testing.T) {
 				WithKeychain(authn.DefaultKeychain),
 			},
 			want: &options{
-				RootCertificate: nil,
-				ROpt: []remote.Option{
+				rootCertificate: nil,
+				rOpt: []remote.Option{
 					remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 					remote.WithAuthFromKeychain(authn.DefaultKeychain),
 					remote.WithTransport(http.DefaultTransport),
 				},
-				Auth:     &authn.Basic{Username: "foo", Password: "bar"},
-				Keychain: authn.DefaultKeychain,
+				auth:     &authn.Basic{Username: "foo", Password: "bar"},
+				keychain: authn.DefaultKeychain,
 			},
 		},
 		{
 			name: "truststore, empty document",
 			opts: []Options{WithTrustStore(&trustpolicy.Document{})},
 			want: &options{
-				RootCertificate: nil,
-				ROpt:            nil,
-				TrustPolicy:     &trustpolicy.Document{},
+				rootCertificate: nil,
+				rOpt:            nil,
+				trustPolicy:     &trustpolicy.Document{},
 			},
 		},
 		{
 			name: "truststore, dummy document",
 			opts: []Options{WithTrustStore(dummyPolicyDocument())},
 			want: &options{
-				RootCertificate: nil,
-				ROpt:            nil,
-				TrustPolicy:     dummyPolicyDocument(),
+				rootCertificate: nil,
+				rOpt:            nil,
+				trustPolicy:     dummyPolicyDocument(),
 			},
 		},
 		{
 			name: "insecure, false",
 			opts: []Options{WithInsecureRegistry(false)},
 			want: &options{
-				RootCertificate: nil,
-				ROpt:            nil,
-				TrustPolicy:     nil,
-				Insecure:        false,
+				rootCertificate: nil,
+				rOpt:            nil,
+				trustPolicy:     nil,
+				insecure:        false,
 			},
 		},
 		{
 			name: "insecure, true",
 			opts: []Options{WithInsecureRegistry(true)},
 			want: &options{
-				RootCertificate: nil,
-				ROpt:            nil,
-				TrustPolicy:     nil,
-				Insecure:        true,
+				rootCertificate: nil,
+				rOpt:            nil,
+				trustPolicy:     nil,
+				insecure:        true,
 			},
 		},
 		{
 			name: "insecure, default",
 			opts: []Options{},
 			want: &options{
-				RootCertificate: nil,
-				ROpt:            nil,
-				TrustPolicy:     nil,
-				Insecure:        false,
+				rootCertificate: nil,
+				rOpt:            nil,
+				trustPolicy:     nil,
+				insecure:        false,
 			},
 		},
 	}
@@ -157,24 +157,24 @@ func TestOptions(t *testing.T) {
 			for _, opt := range tc.opts {
 				opt(&o)
 			}
-			if !reflect.DeepEqual(o.RootCertificate, tc.want.RootCertificate) {
-				t.Errorf("got %#v, want %#v", &o.RootCertificate, tc.want.RootCertificate)
+			if !reflect.DeepEqual(o.rootCertificate, tc.want.rootCertificate) {
+				t.Errorf("got %#v, want %#v", &o.rootCertificate, tc.want.rootCertificate)
 			}
 
-			if !reflect.DeepEqual(o.TrustPolicy, tc.want.TrustPolicy) {
-				t.Errorf("got %#v, want %#v", &o.TrustPolicy, tc.want.TrustPolicy)
+			if !reflect.DeepEqual(o.trustPolicy, tc.want.trustPolicy) {
+				t.Errorf("got %#v, want %#v", &o.trustPolicy, tc.want.trustPolicy)
 			}
 
-			if tc.want.ROpt != nil {
-				if len(o.ROpt) != len(tc.want.ROpt) {
-					t.Errorf("got %d remote options, want %d", len(o.ROpt), len(tc.want.ROpt))
+			if tc.want.rOpt != nil {
+				if len(o.rOpt) != len(tc.want.rOpt) {
+					t.Errorf("got %d remote options, want %d", len(o.rOpt), len(tc.want.rOpt))
 				}
 				return
 			}
 
-			if tc.want.ROpt == nil {
-				if len(o.ROpt) != 0 {
-					t.Errorf("got %d remote options, want %d", len(o.ROpt), 0)
+			if tc.want.rOpt == nil {
+				if len(o.rOpt) != 0 {
+					t.Errorf("got %d remote options, want %d", len(o.rOpt), 0)
 				}
 			}
 		})

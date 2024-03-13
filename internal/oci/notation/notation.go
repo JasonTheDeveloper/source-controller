@@ -48,13 +48,13 @@ const DefaultTrustPolicyKey = "trustpolicy.json"
 
 // options is a struct that holds options for verifier.
 type options struct {
-	RootCertificate []byte
-	ROpt            []remote.Option
-	TrustPolicy     *trustpolicy.Document
-	Auth            authn.Authenticator
-	Keychain        authn.Keychain
-	Insecure        bool
-	Logger          logr.Logger
+	rootCertificate []byte
+	rOpt            []remote.Option
+	trustPolicy     *trustpolicy.Document
+	auth            authn.Authenticator
+	keychain        authn.Keychain
+	insecure        bool
+	logger          logr.Logger
 }
 
 // Options is a function that configures the options applied to a Verifier.
@@ -63,14 +63,14 @@ type Options func(opts *options)
 // WithInsecureRegistry sets notation to verify against insecure registry.
 func WithInsecureRegistry(insecure bool) Options {
 	return func(opts *options) {
-		opts.Insecure = insecure
+		opts.insecure = insecure
 	}
 }
 
 // WithTrustStore sets the trust store configuration.
 func WithTrustStore(trustStore *trustpolicy.Document) Options {
 	return func(opts *options) {
-		opts.TrustPolicy = trustStore
+		opts.trustPolicy = trustStore
 	}
 }
 
@@ -81,7 +81,7 @@ func WithTrustStore(trustStore *trustpolicy.Document) Options {
 // in the notation options.
 func WithRootCertificate(data []byte) Options {
 	return func(opts *options) {
-		opts.RootCertificate = data
+		opts.rootCertificate = data
 	}
 }
 
@@ -89,7 +89,7 @@ func WithRootCertificate(data []byte) Options {
 // remote options used by the verifier
 func WithRemoteOptions(opts ...remote.Option) Options {
 	return func(o *options) {
-		o.ROpt = opts
+		o.rOpt = opts
 	}
 }
 
@@ -97,7 +97,7 @@ func WithRemoteOptions(opts ...remote.Option) Options {
 // remote options used by the verifier
 func WithAuth(auth authn.Authenticator) Options {
 	return func(o *options) {
-		o.Auth = auth
+		o.auth = auth
 	}
 }
 
@@ -105,7 +105,7 @@ func WithAuth(auth authn.Authenticator) Options {
 // remote options used by the verifier
 func WithKeychain(key authn.Keychain) Options {
 	return func(o *options) {
-		o.Keychain = key
+		o.keychain = key
 	}
 }
 
@@ -113,7 +113,7 @@ func WithKeychain(key authn.Keychain) Options {
 // The logger is used for logging purposes within the options.
 func WithLogger(logger logr.Logger) Options {
 	return func(o *options) {
-		o.Logger = logger
+		o.logger = logger
 	}
 }
 
@@ -155,10 +155,10 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 	}
 
 	store := &trustStore{
-		cert: o.RootCertificate,
+		cert: o.rootCertificate,
 	}
 
-	trustpolicy := cleanTrustPolicy(o.TrustPolicy, o.Logger)
+	trustpolicy := cleanTrustPolicy(o.trustPolicy, o.logger)
 	if trustpolicy == nil {
 		return nil, fmt.Errorf("trust policy cannot be empty")
 	}
@@ -169,12 +169,12 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 	}
 
 	return &NotationVerifier{
-		auth:     o.Auth,
-		keychain: o.Keychain,
+		auth:     o.auth,
+		keychain: o.keychain,
 		verifier: &verifier,
-		opts:     o.ROpt,
-		insecure: o.Insecure,
-		logger:   o.Logger,
+		opts:     o.rOpt,
+		insecure: o.insecure,
+		logger:   o.logger,
 	}, nil
 }
 
