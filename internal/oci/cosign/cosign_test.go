@@ -42,14 +42,14 @@ func TestOptions(t *testing.T) {
 			ROpt:      nil,
 		},
 	}, {
-		name: "remote keychain option",
+		name: "keychain option",
 		opts: []Options{WithRemoteOptions(remote.WithAuthFromKeychain(authn.DefaultKeychain))},
 		want: &options{
 			PublicKey: nil,
 			ROpt:      []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)},
 		},
 	}, {
-		name: "remote keychain and authenticator option",
+		name: "keychain and authenticator option",
 		opts: []Options{WithRemoteOptions(
 			remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 			remote.WithAuthFromKeychain(authn.DefaultKeychain),
@@ -62,7 +62,7 @@ func TestOptions(t *testing.T) {
 			},
 		},
 	}, {
-		name: "remote keychain, authenticator and transport option",
+		name: "keychain, authenticator and transport option",
 		opts: []Options{WithRemoteOptions(
 			remote.WithAuth(&authn.Basic{Username: "foo", Password: "bar"}),
 			remote.WithAuthFromKeychain(authn.DefaultKeychain),
