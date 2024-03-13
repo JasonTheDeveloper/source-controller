@@ -158,7 +158,12 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 		cert: o.RootCertificate,
 	}
 
-	verifier, err := verifier.New(o.TrustPolicy, store, nil)
+	trustpolicy := cleanTrustPolicy(o.TrustPolicy, o.Logger)
+	if trustpolicy == nil {
+		return nil, fmt.Errorf("trust policy cannot be empty")
+	}
+
+	verifier, err := verifier.New(trustpolicy, store, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -171,6 +176,30 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 		insecure: o.Insecure,
 		logger:   o.Logger,
 	}, nil
+}
+
+// cleanTrustPolicy cleans the given trust policy by removing trust stores and trusted identities
+// for trust policy statements that are set to skip signature verification but still have configured trust stores and/or trusted identities.
+// It takes a pointer to a trustpolicy.Document and a logger from the logr package as input parameters.
+// If the trustPolicy is nil, it returns nil.
+// Otherwise, it iterates over the trustPolicy.TrustPolicies and checks if each trust policy statement's
+// SignatureVerification.VerificationLevel is set to trustpolicy.LevelSkip.Name.
+// If it is, it logs a warning message and removes the trust stores and trusted identities for that trust policy statement.
+// Finally, it returns the modified trustPolicy.
+func cleanTrustPolicy(trustPolicy *trustpolicy.Document, logger logr.Logger) *trustpolicy.Document {
+	if trustPolicy == nil {
+		return nil
+	}
+
+	for i, j := range trustPolicy.TrustPolicies {
+		if j.SignatureVerification.VerificationLevel == trustpolicy.LevelSkip.Name {
+			logger.Info(fmt.Sprintf("warning: trust policy statement '%s' is set to skip signature verification but configured with trust stores and/or trusted identities. Removing trust stores and trusted identities", j.Name))
+			trustPolicy.TrustPolicies[i].TrustStores = []string{}
+			trustPolicy.TrustPolicies[i].TrustedIdentities = []string{}
+		}
+	}
+
+	return trustPolicy
 }
 
 // Verify verifies the authenticity of the given ref OCI image.
