@@ -452,11 +452,11 @@ func (r *OCIRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 
 			if result == soci.VerificationResultIgnored {
 				r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
-					"notation validation ignored action for '%s' with message: %s", ref, err)
+					"validation ignored for '%s' with message: %s", ref, err)
 			}
 		} else if result == soci.VerificationResultIgnored {
 			r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
-				"notation validation ignored action for '%s'", ref)
+				"validation ignored for '%s'", ref)
 		}
 
 		if result == soci.VerificationResultSuccess {
