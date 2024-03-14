@@ -252,28 +252,37 @@ func (v *NotationVerifier) checkOutcome(outcomes []*notation.VerificationOutcome
 		return oci.VerificationResultFailed, fmt.Errorf("signature verification failed for all the signatures associated with %s", url)
 	}
 
+	// should only ever be one item in the outcomes slice
 	outcome := outcomes[0]
 
+	// if the verification level is set to skip, we ignore the verification result
+	// as there should be no verification results in outcome and we do not want
+	// to mark the result as verified
 	if outcome.VerificationLevel == trustpolicy.LevelSkip {
 		return oci.VerificationResultIgnored, nil
 	}
 
 	ignore := false
 
+	// loop through verification results to check for errors
 	for _, i := range outcome.VerificationResults {
+		// error if action is not marked as `skip` and there is an error
 		if i.Error != nil {
+			// flag to ignore the verification result if the error is related to type `authenticity`
 			if i.Type == trustpolicy.TypeAuthenticity {
 				ignore = true
 			}
-
+			// log results of error
 			v.logger.Info(fmt.Sprintf("verification check for type %s failed for %s with message %s", i.Type, url, i.Error.Error()))
 		}
 	}
 
+	// if the ignore flag is set, we ignore the verification result so not to mark as verified
 	if ignore {
 		return oci.VerificationResultIgnored, nil
 	}
 
+	// result is okay to mark as verified
 	return oci.VerificationResultSuccess, nil
 }
 
