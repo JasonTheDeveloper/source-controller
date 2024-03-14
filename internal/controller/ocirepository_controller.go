@@ -437,26 +437,16 @@ func (r *OCIRepositoryReconciler) reconcileSource(ctx context.Context, sp *patch
 
 		result, err := r.verifySignature(ctx, obj, ref, keychain, auth, opts...)
 		if err != nil {
-			if result == soci.VerificationResultFailed {
-				provider := obj.Spec.Verify.Provider
-				if obj.Spec.Verify.SecretRef == nil && obj.Spec.Verify.Provider == "cosign" {
-					provider = fmt.Sprintf("%s keyless", provider)
-				}
-				e := serror.NewGeneric(
-					fmt.Errorf("failed to verify the signature using provider '%s': %w", provider, err),
-					sourcev1.VerificationError,
-				)
-				conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, e.Reason, e.Err.Error())
-				return sreconcile.ResultEmpty, e
+			provider := obj.Spec.Verify.Provider
+			if obj.Spec.Verify.SecretRef == nil && obj.Spec.Verify.Provider == "cosign" {
+				provider = fmt.Sprintf("%s keyless", provider)
 			}
-
-			if result == soci.VerificationResultIgnored {
-				r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
-					"validation ignored for '%s' with message: %s", ref, err)
-			}
-		} else if result == soci.VerificationResultIgnored {
-			r.eventLogf(ctx, obj, corev1.EventTypeWarning, sourcev1.VerificationError,
-				"validation ignored for '%s'", ref)
+			e := serror.NewGeneric(
+				fmt.Errorf("failed to verify the signature using provider '%s': %w", provider, err),
+				sourcev1.VerificationError,
+			)
+			conditions.MarkFalse(obj, sourcev1.SourceVerifiedCondition, e.Reason, e.Err.Error())
+			return sreconcile.ResultEmpty, e
 		}
 
 		if result == soci.VerificationResultSuccess {

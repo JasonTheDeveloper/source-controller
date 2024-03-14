@@ -236,6 +236,18 @@ func (v *NotationVerifier) Verify(ctx context.Context, ref name.Reference) (oci.
 		return oci.VerificationResultFailed, err
 	}
 
+	return v.checkOutcome(outcomes, url)
+}
+
+// checkOutcome checks the verification outcomes for a given URL and returns the corresponding OCI verification result.
+// It takes a slice of verification outcomes and a URL as input parameters.
+// If there are no verification outcomes, it returns a failed verification result with an error message.
+// If the first verification outcome has a verification level of "trustpolicy.LevelSkip", it returns an ignored verification result.
+// If any of the verification results have an error, it logs the error message and sets the "ignore" flag to true if the error type is "trustpolicy.TypeAuthenticity".
+// If the "ignore" flag is true, it returns an ignored verification result.
+// Otherwise, it returns a successful verification result.
+// The function returns the OCI verification result and an error, if any.
+func (v *NotationVerifier) checkOutcome(outcomes []*notation.VerificationOutcome, url string) (oci.VerificationResult, error) {
 	if len(outcomes) == 0 {
 		return oci.VerificationResultFailed, fmt.Errorf("signature verification failed for all the signatures associated with %s", url)
 	}
@@ -246,16 +258,20 @@ func (v *NotationVerifier) Verify(ctx context.Context, ref name.Reference) (oci.
 		return oci.VerificationResultIgnored, nil
 	}
 
+	ignore := false
+
 	for _, i := range outcome.VerificationResults {
 		if i.Error != nil {
 			if i.Type == trustpolicy.TypeAuthenticity {
-				return oci.VerificationResultIgnored, i.Error
+				ignore = true
 			}
 
-			if i.Action == trustpolicy.ActionLog {
-				v.logger.Info(fmt.Sprintf("verification check for type %s failed for %s with message %s", i.Type, url, i.Error.Error()))
-			}
+			v.logger.Info(fmt.Sprintf("verification check for type %s failed for %s with message %s", i.Type, url, i.Error.Error()))
 		}
+	}
+
+	if ignore {
+		return oci.VerificationResultIgnored, nil
 	}
 
 	return oci.VerificationResultSuccess, nil

@@ -17,6 +17,7 @@ limitations under the License.
 package notation
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
@@ -24,8 +25,11 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/notaryproject/notation-go"
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 	. "github.com/onsi/gomega"
+
+	"github.com/fluxcd/source-controller/internal/oci"
 )
 
 func TestOptions(t *testing.T) {
@@ -346,6 +350,116 @@ func TestCleanTrustPolicy(t *testing.T) {
 			if tc.logMessage != "" {
 				g.Expect(len(l.Output)).Should(Equal(1))
 				g.Expect(l.Output[0]).Should(Equal(tc.logMessage))
+			}
+		})
+	}
+}
+
+func TestOutcomeChecker(t *testing.T) {
+	g := NewWithT(t)
+
+	testCases := []struct {
+		name               string
+		outcome            []*notation.VerificationOutcome
+		wantErr            bool
+		errMessage         string
+		logMessage         []string
+		verificationResult oci.VerificationResult
+	}{
+		{
+			name:               "no outcome failed with error message",
+			verificationResult: oci.VerificationResultFailed,
+			wantErr:            true,
+			errMessage:         "signature verification failed for all the signatures associated with example.com/podInfo",
+		},
+		{
+			name: "verification result ignored with log message",
+			outcome: []*notation.VerificationOutcome{
+				{
+					VerificationLevel: trustpolicy.LevelAudit,
+					VerificationResults: []*notation.ValidationResult{
+						{
+							Type:   trustpolicy.TypeAuthenticity,
+							Action: trustpolicy.ActionLog,
+							Error:  fmt.Errorf("123"),
+						},
+					},
+				},
+			},
+			verificationResult: oci.VerificationResultIgnored,
+			logMessage:         []string{"verification check for type authenticity failed for example.com/podInfo with message 123"},
+		},
+		{
+			name: "verification result ignored with no log message (skip)",
+			outcome: []*notation.VerificationOutcome{
+				{
+					VerificationLevel:   trustpolicy.LevelSkip,
+					VerificationResults: []*notation.ValidationResult{},
+				},
+			},
+			verificationResult: oci.VerificationResultIgnored,
+		},
+		{
+			name: "verification result success with log message",
+			outcome: []*notation.VerificationOutcome{
+				{
+					VerificationLevel: trustpolicy.LevelAudit,
+					VerificationResults: []*notation.ValidationResult{
+						{
+							Type:   trustpolicy.TypeAuthenticTimestamp,
+							Action: trustpolicy.ActionLog,
+							Error:  fmt.Errorf("456"),
+						},
+						{
+							Type:   trustpolicy.TypeExpiry,
+							Action: trustpolicy.ActionLog,
+							Error:  fmt.Errorf("789"),
+						},
+					},
+				},
+			},
+			verificationResult: oci.VerificationResultSuccess,
+			logMessage: []string{
+				"verification check for type authenticTimestamp failed for example.com/podInfo with message 456",
+				"verification check for type expiry failed for example.com/podInfo with message 789",
+			},
+		},
+		{
+			name: "verification result success with no log message",
+			outcome: []*notation.VerificationOutcome{
+				{
+					VerificationLevel:   trustpolicy.LevelAudit,
+					VerificationResults: []*notation.ValidationResult{},
+				},
+			},
+			verificationResult: oci.VerificationResultSuccess,
+		},
+	}
+
+	// Run the test cases
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := &testLogger{[]string{}, logr.RuntimeInfo{CallDepth: 1}}
+			logger := logr.New(l)
+
+			v := NotationVerifier{
+				logger: logger,
+			}
+
+			result, err := v.checkOutcome(tc.outcome, "example.com/podInfo")
+
+			if tc.wantErr {
+				g.Expect(err).ToNot(BeNil())
+				g.Expect(err.Error()).Should(Equal(tc.errMessage))
+			} else {
+				g.Expect(err).To(BeNil())
+			}
+
+			g.Expect(result).Should(Equal(tc.verificationResult))
+			g.Expect(len(l.Output)).Should(Equal(len(tc.logMessage)))
+
+			for i, j := range tc.logMessage {
+				g.Expect(l.Output[i]).Should(Equal(j))
 			}
 		})
 	}
