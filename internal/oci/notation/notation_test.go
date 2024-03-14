@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/notaryproject/notation-go"
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
@@ -458,6 +459,83 @@ func TestOutcomeChecker(t *testing.T) {
 
 			for i, j := range tc.wantLogMessage {
 				g.Expect(l.Output[i]).Should(Equal(j))
+			}
+		})
+	}
+}
+
+func TestRepoUrlWithDigest(t *testing.T) {
+	g := NewWithT(t)
+
+	testCases := []struct {
+		name              string
+		repoUrl           string
+		digest            string
+		tag               string
+		resultUrl         string
+		wantErrMessage    string
+		passUrlWithoutTag bool
+	}{
+		{
+			name:           "valid repo url with digest",
+			repoUrl:        "ghcr.io/stefanprodan/charts/podinfo",
+			digest:         "sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
+			resultUrl:      "ghcr.io/stefanprodan/charts/podinfo@sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
+			wantErrMessage: "",
+		},
+		{
+			name:           "valid repo url with tag",
+			repoUrl:        "ghcr.io/stefanprodan/charts/podinfo",
+			tag:            "6.6.0",
+			resultUrl:      "ghcr.io/stefanprodan/charts/podinfo@sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
+			wantErrMessage: "",
+		},
+		{
+			name:              "valid repo url without tag",
+			repoUrl:           "ghcr.io/stefanprodan/charts/podinfo",
+			tag:               "6.6.0",
+			resultUrl:         "ghcr.io/stefanprodan/charts/podinfo@sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
+			wantErrMessage:    "url ghcr.io/stefanprodan/charts/podinfo does not contain tag or digest",
+			passUrlWithoutTag: true,
+		},
+	}
+
+	// Run the test cases
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := &testLogger{[]string{}, logr.RuntimeInfo{CallDepth: 1}}
+			logger := logr.New(l)
+
+			v := NotationVerifier{
+				logger: logger,
+			}
+
+			var url string
+			repo, _ := name.NewRepository(tc.repoUrl)
+			var ref name.Reference
+			if tc.digest != "" {
+				ref = repo.Digest(tc.digest)
+				url = fmt.Sprintf("%s@%s", tc.repoUrl, tc.digest)
+			} else if tc.tag != "" {
+				ref = repo.Tag(tc.tag)
+				if !tc.passUrlWithoutTag {
+					url = fmt.Sprintf("%s:%s", tc.repoUrl, tc.tag)
+				} else {
+					url = tc.repoUrl
+				}
+			} else {
+				ref = repo.Tag(name.DefaultTag)
+				url = fmt.Sprintf("%s:%s", tc.repoUrl, name.DefaultTag)
+			}
+
+			result, err := v.repoUrlWithDigest(url, ref)
+
+			if tc.wantErrMessage != "" {
+				g.Expect(err).ToNot(BeNil())
+				g.Expect(err.Error()).Should(Equal(tc.wantErrMessage))
+			} else {
+				g.Expect(err).To(BeNil())
+				g.Expect(result).Should(Equal(tc.resultUrl))
 			}
 		})
 	}
