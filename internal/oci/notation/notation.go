@@ -341,7 +341,6 @@ func (v *NotationVerifier) remoteRepo(repoUrl string) (*oras.Repository, error) 
 		Header: http.Header{
 			"User-Agent": {"flux"},
 		},
-		Cache:      oauth.NewCache(),
 		Credential: credentialProvider,
 	}
 
