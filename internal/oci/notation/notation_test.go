@@ -190,10 +190,10 @@ func TestCleanTrustPolicy(t *testing.T) {
 	g := NewWithT(t)
 
 	testCases := []struct {
-		name       string
-		policy     []trustpolicy.TrustPolicy
-		want       *trustpolicy.Document
-		logMessage string
+		name           string
+		policy         []trustpolicy.TrustPolicy
+		want           *trustpolicy.Document
+		wantLogMessage string
 	}{
 		{
 			name: "no trust policy",
@@ -280,7 +280,7 @@ func TestCleanTrustPolicy(t *testing.T) {
 					},
 				},
 			},
-			logMessage: "warning: trust policy statement 'test-statement-name' is set to skip signature verification but configured with trust stores and/or trusted identities. Removing trust stores and trusted identities",
+			wantLogMessage: "warning: trust policy statement 'test-statement-name' is set to skip signature verification but configured with trust stores and/or trusted identities. Removing trust stores and trusted identities",
 		},
 		{
 			name: "trust policy with multiple policies and mixture of verification levels including ship",
@@ -319,7 +319,7 @@ func TestCleanTrustPolicy(t *testing.T) {
 					},
 				},
 			},
-			logMessage: "warning: trust policy statement 'test-statement-name-2' is set to skip signature verification but configured with trust stores and/or trusted identities. Removing trust stores and trusted identities",
+			wantLogMessage: "warning: trust policy statement 'test-statement-name-2' is set to skip signature verification but configured with trust stores and/or trusted identities. Removing trust stores and trusted identities",
 		},
 	}
 
@@ -348,9 +348,9 @@ func TestCleanTrustPolicy(t *testing.T) {
 				t.Errorf("got %#v, want %#v", cleanedPolicy, tc.want)
 			}
 
-			if tc.logMessage != "" {
+			if tc.wantLogMessage != "" {
 				g.Expect(len(l.Output)).Should(Equal(1))
-				g.Expect(l.Output[0]).Should(Equal(tc.logMessage))
+				g.Expect(l.Output[0]).Should(Equal(tc.wantLogMessage))
 			}
 		})
 	}
@@ -360,16 +360,16 @@ func TestOutcomeChecker(t *testing.T) {
 	g := NewWithT(t)
 
 	testCases := []struct {
-		name               string
-		outcome            []*notation.VerificationOutcome
-		wantErrMessage     string
-		wantLogMessage     []string
-		verificationResult oci.VerificationResult
+		name                   string
+		outcome                []*notation.VerificationOutcome
+		wantErrMessage         string
+		wantLogMessage         []string
+		wantVerificationResult oci.VerificationResult
 	}{
 		{
-			name:               "no outcome failed with error message",
-			verificationResult: oci.VerificationResultFailed,
-			wantErrMessage:     "signature verification failed for all the signatures associated with example.com/podInfo",
+			name:                   "no outcome failed with error message",
+			wantVerificationResult: oci.VerificationResultFailed,
+			wantErrMessage:         "signature verification failed for all the signatures associated with example.com/podInfo",
 		},
 		{
 			name: "verification result ignored with log message",
@@ -385,8 +385,8 @@ func TestOutcomeChecker(t *testing.T) {
 					},
 				},
 			},
-			verificationResult: oci.VerificationResultIgnored,
-			wantLogMessage:     []string{"verification check for type 'authenticity' failed for 'example.com/podInfo' with message: '123'"},
+			wantVerificationResult: oci.VerificationResultIgnored,
+			wantLogMessage:         []string{"verification check for type 'authenticity' failed for 'example.com/podInfo' with message: '123'"},
 		},
 		{
 			name: "verification result ignored with no log message (skip)",
@@ -396,7 +396,7 @@ func TestOutcomeChecker(t *testing.T) {
 					VerificationResults: []*notation.ValidationResult{},
 				},
 			},
-			verificationResult: oci.VerificationResultIgnored,
+			wantVerificationResult: oci.VerificationResultIgnored,
 		},
 		{
 			name: "verification result success with log message",
@@ -417,7 +417,7 @@ func TestOutcomeChecker(t *testing.T) {
 					},
 				},
 			},
-			verificationResult: oci.VerificationResultSuccess,
+			wantVerificationResult: oci.VerificationResultSuccess,
 			wantLogMessage: []string{
 				"verification check for type 'authenticTimestamp' failed for 'example.com/podInfo' with message: '456'",
 				"verification check for type 'expiry' failed for 'example.com/podInfo' with message: '789'",
@@ -431,7 +431,7 @@ func TestOutcomeChecker(t *testing.T) {
 					VerificationResults: []*notation.ValidationResult{},
 				},
 			},
-			verificationResult: oci.VerificationResultSuccess,
+			wantVerificationResult: oci.VerificationResultSuccess,
 		},
 	}
 
@@ -454,7 +454,7 @@ func TestOutcomeChecker(t *testing.T) {
 				g.Expect(err).To(BeNil())
 			}
 
-			g.Expect(result).Should(Equal(tc.verificationResult))
+			g.Expect(result).Should(Equal(tc.wantVerificationResult))
 			g.Expect(len(l.Output)).Should(Equal(len(tc.wantLogMessage)))
 
 			for i, j := range tc.wantLogMessage {
@@ -472,7 +472,7 @@ func TestRepoUrlWithDigest(t *testing.T) {
 		repoUrl           string
 		digest            string
 		tag               string
-		resultUrl         string
+		wantResultUrl     string
 		wantErrMessage    string
 		passUrlWithoutTag bool
 	}{
@@ -480,21 +480,21 @@ func TestRepoUrlWithDigest(t *testing.T) {
 			name:           "valid repo url with digest",
 			repoUrl:        "ghcr.io/stefanprodan/charts/podinfo",
 			digest:         "sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
-			resultUrl:      "ghcr.io/stefanprodan/charts/podinfo@sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
+			wantResultUrl:  "ghcr.io/stefanprodan/charts/podinfo@sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
 			wantErrMessage: "",
 		},
 		{
 			name:           "valid repo url with tag",
 			repoUrl:        "ghcr.io/stefanprodan/charts/podinfo",
 			tag:            "6.6.0",
-			resultUrl:      "ghcr.io/stefanprodan/charts/podinfo@sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
+			wantResultUrl:  "ghcr.io/stefanprodan/charts/podinfo@sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
 			wantErrMessage: "",
 		},
 		{
 			name:              "valid repo url without tag",
 			repoUrl:           "ghcr.io/stefanprodan/charts/podinfo",
 			tag:               "6.6.0",
-			resultUrl:         "ghcr.io/stefanprodan/charts/podinfo@sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
+			wantResultUrl:     "ghcr.io/stefanprodan/charts/podinfo@sha256:cdd538a0167e4b51152b71a477e51eb6737553510ce8797dbcc537e1342311bb",
 			wantErrMessage:    "url ghcr.io/stefanprodan/charts/podinfo does not contain tag or digest",
 			passUrlWithoutTag: true,
 		},
@@ -535,7 +535,7 @@ func TestRepoUrlWithDigest(t *testing.T) {
 				g.Expect(err.Error()).Should(Equal(tc.wantErrMessage))
 			} else {
 				g.Expect(err).To(BeNil())
-				g.Expect(result).Should(Equal(tc.resultUrl))
+				g.Expect(result).Should(Equal(tc.wantResultUrl))
 			}
 		})
 	}
