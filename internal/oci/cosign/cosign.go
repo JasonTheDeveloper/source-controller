@@ -37,9 +37,9 @@ import (
 
 // options is a struct that holds options for verifier.
 type options struct {
-	PublicKey  []byte
-	ROpt       []remote.Option
-	Identities []cosign.Identity
+	publicKey  []byte
+	rOpt       []remote.Option
+	identities []cosign.Identity
 }
 
 // Options is a function that configures the options applied to a Verifier.
@@ -48,7 +48,7 @@ type Options func(opts *options)
 // WithPublicKey sets the public key.
 func WithPublicKey(publicKey []byte) Options {
 	return func(opts *options) {
-		opts.PublicKey = publicKey
+		opts.publicKey = publicKey
 	}
 }
 
@@ -56,7 +56,7 @@ func WithPublicKey(publicKey []byte) Options {
 // remote options used by the verifier.
 func WithRemoteOptions(opts ...remote.Option) Options {
 	return func(o *options) {
-		o.ROpt = opts
+		o.rOpt = opts
 	}
 }
 
@@ -64,7 +64,7 @@ func WithRemoteOptions(opts ...remote.Option) Options {
 // for the signature to be deemed valid.
 func WithIdentities(identities []cosign.Identity) Options {
 	return func(opts *options) {
-		opts.Identities = identities
+		opts.identities = identities
 	}
 }
 
@@ -88,9 +88,9 @@ func NewCosignVerifier(ctx context.Context, opts ...Options) (*CosignVerifier, e
 		return nil, err
 	}
 
-	checkOpts.Identities = o.Identities
-	if o.ROpt != nil {
-		co = append(co, ociremote.WithRemoteOptions(o.ROpt...))
+	checkOpts.Identities = o.identities
+	if o.rOpt != nil {
+		co = append(co, ociremote.WithRemoteOptions(o.rOpt...))
 	}
 
 	checkOpts.RegistryClientOpts = co
@@ -98,13 +98,13 @@ func NewCosignVerifier(ctx context.Context, opts ...Options) (*CosignVerifier, e
 	// If a public key is provided, it will use it to verify the signature.
 	// If there is no public key provided, it will try keyless verification.
 	// https://github.com/sigstore/cosign/blob/main/KEYLESS.md.
-	if len(o.PublicKey) > 0 {
+	if len(o.publicKey) > 0 {
 		checkOpts.Offline = true
 		// TODO(hidde): this is an oversight in our implementation. As it is
 		//  theoretically possible to have a custom PK, without disabling tlog.
 		checkOpts.IgnoreTlog = true
 
-		pubKeyRaw, err := cryptoutils.UnmarshalPEMToPublicKey(o.PublicKey)
+		pubKeyRaw, err := cryptoutils.UnmarshalPEMToPublicKey(o.publicKey)
 		if err != nil {
 			return nil, err
 		}
