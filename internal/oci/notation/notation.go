@@ -74,10 +74,10 @@ func WithTrustStore(trustStore *trustpolicy.Document) Options {
 	}
 }
 
-// WithRootCertificate is a function that creates a NotationOptions function option
-// to set the root CA certificate for notary.
-// It takes in the certificate data as a byte slice and the name of the certificate.
-// The function returns a NotationOptions function option that sets the public certificate
+// WithRootCertificate is a functional option for overriding the default
+// rootCertificate options used by the verifier to set the root CA certificate for notary.
+// It takes in the certificate data as a byte slice.
+// The function returns a options function option that sets the public certificate
 // in the notation options.
 func WithRootCertificate(data []byte) Options {
 	return func(opts *options) {
@@ -94,7 +94,7 @@ func WithRemoteOptions(opts ...remote.Option) Options {
 }
 
 // WithAuth is a functional option for overriding the default
-// remote options used by the verifier
+// authenticator options used by the verifier
 func WithAuth(auth authn.Authenticator) Options {
 	return func(o *options) {
 		o.auth = auth
@@ -102,7 +102,7 @@ func WithAuth(auth authn.Authenticator) Options {
 }
 
 // WithKeychain is a functional option for overriding the default
-// remote options used by the verifier
+// keychain options used by the verifier
 func WithKeychain(key authn.Keychain) Options {
 	return func(o *options) {
 		o.keychain = key
