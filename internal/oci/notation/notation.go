@@ -127,6 +127,12 @@ type NotationVerifier struct {
 	logger   logr.Logger
 }
 
+var _ truststore.X509TrustStore = &trustStore{}
+
+// trustStore is used by notation-go/verifier to retrieve the root certificate for notary.
+// The default behaviour is to read the certificate from disk and return it as a byte slice.
+// The reason for implementing the interface here is to avoid reading the certificate from disk
+// as the certificate is already available in memory.
 type trustStore struct {
 	cert []byte
 }
