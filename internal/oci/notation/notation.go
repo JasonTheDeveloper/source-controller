@@ -37,6 +37,7 @@ import (
 	"github.com/notaryproject/notation-go/verifier/truststore"
 	oras "oras.land/oras-go/v2/registry/remote"
 	oauth "oras.land/oras-go/v2/registry/remote/auth"
+	retryhttp "oras.land/oras-go/v2/registry/remote/retry"
 
 	"github.com/fluxcd/source-controller/internal/helm/common"
 	"github.com/fluxcd/source-controller/internal/oci"
@@ -336,6 +337,7 @@ func (v *NotationVerifier) remoteRepo(repoUrl string) (*oras.Repository, error) 
 	}
 
 	repoClient := &oauth.Client{
+		Client: retryhttp.DefaultClient,
 		Header: http.Header{
 			"User-Agent": {"flux"},
 		},
