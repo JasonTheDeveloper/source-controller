@@ -361,16 +361,14 @@ func TestOutcomeChecker(t *testing.T) {
 	testCases := []struct {
 		name               string
 		outcome            []*notation.VerificationOutcome
-		wantErr            bool
-		errMessage         string
-		logMessage         []string
+		wantErrMessage     string
+		wantLogMessage     []string
 		verificationResult oci.VerificationResult
 	}{
 		{
 			name:               "no outcome failed with error message",
 			verificationResult: oci.VerificationResultFailed,
-			wantErr:            true,
-			errMessage:         "signature verification failed for all the signatures associated with example.com/podInfo",
+			wantErrMessage:     "signature verification failed for all the signatures associated with example.com/podInfo",
 		},
 		{
 			name: "verification result ignored with log message",
@@ -387,7 +385,7 @@ func TestOutcomeChecker(t *testing.T) {
 				},
 			},
 			verificationResult: oci.VerificationResultIgnored,
-			logMessage:         []string{"verification check for type authenticity failed for example.com/podInfo with message 123"},
+			wantLogMessage:     []string{"verification check for type 'authenticity' failed for 'example.com/podInfo' with message: '123'"},
 		},
 		{
 			name: "verification result ignored with no log message (skip)",
@@ -419,9 +417,9 @@ func TestOutcomeChecker(t *testing.T) {
 				},
 			},
 			verificationResult: oci.VerificationResultSuccess,
-			logMessage: []string{
-				"verification check for type authenticTimestamp failed for example.com/podInfo with message 456",
-				"verification check for type expiry failed for example.com/podInfo with message 789",
+			wantLogMessage: []string{
+				"verification check for type 'authenticTimestamp' failed for 'example.com/podInfo' with message: '456'",
+				"verification check for type 'expiry' failed for 'example.com/podInfo' with message: '789'",
 			},
 		},
 		{
@@ -448,17 +446,17 @@ func TestOutcomeChecker(t *testing.T) {
 
 			result, err := v.checkOutcome(tc.outcome, "example.com/podInfo")
 
-			if tc.wantErr {
+			if tc.wantErrMessage != "" {
 				g.Expect(err).ToNot(BeNil())
-				g.Expect(err.Error()).Should(Equal(tc.errMessage))
+				g.Expect(err.Error()).Should(Equal(tc.wantErrMessage))
 			} else {
 				g.Expect(err).To(BeNil())
 			}
 
 			g.Expect(result).Should(Equal(tc.verificationResult))
-			g.Expect(len(l.Output)).Should(Equal(len(tc.logMessage)))
+			g.Expect(len(l.Output)).Should(Equal(len(tc.wantLogMessage)))
 
-			for i, j := range tc.logMessage {
+			for i, j := range tc.wantLogMessage {
 				g.Expect(l.Output[i]).Should(Equal(j))
 			}
 		})

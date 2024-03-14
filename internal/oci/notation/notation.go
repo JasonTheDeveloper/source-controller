@@ -274,7 +274,7 @@ func (v *NotationVerifier) checkOutcome(outcomes []*notation.VerificationOutcome
 				ignore = true
 			}
 			// log results of error
-			v.logger.Info(fmt.Sprintf("verification check for type %s failed for %s with message %s", i.Type, url, i.Error.Error()))
+			v.logger.Info(fmt.Sprintf("verification check for type '%s' failed for '%s' with message: '%s'", i.Type, url, i.Error.Error()))
 		}
 	}
 
