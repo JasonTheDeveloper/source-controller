@@ -244,6 +244,7 @@ func (v *NotationVerifier) Verify(ctx context.Context, ref name.Reference) (oci.
 // It takes a slice of verification outcomes and a URL as input parameters.
 // If there are no verification outcomes, it returns a failed verification result with an error message.
 // If the first verification outcome has a verification level of "trustpolicy.LevelSkip", it returns an ignored verification result.
+// This function assumes that "trustpolicy.TypeIntegrity" is always enforced. It will return a successful validation result if "trustpolicy.TypeAuthenticity" is successful too.
 // If any of the verification results have an error, it logs the error message and sets the "ignore" flag to true if the error type is "trustpolicy.TypeAuthenticity".
 // If the "ignore" flag is true, it returns an ignored verification result.
 // Otherwise, it returns a successful verification result.
