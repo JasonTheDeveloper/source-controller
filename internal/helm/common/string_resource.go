@@ -24,10 +24,16 @@ type StringResource struct {
 	Registry string
 }
 
+// String returns a string representation of the StringResource.
+// It converts the StringResource object to a string.
+// The returned string contains the value of the StringResource.
 func (r StringResource) String() string {
 	return r.Registry
 }
 
+// RegistryStr returns the string representation of the registry resource.
+// It converts the StringResource object to a string that represents the registry resource.
+// The returned string can be used to interact with the registry resource.
 func (r StringResource) RegistryStr() string {
 	return strings.Split(r.Registry, "/")[0]
 }
