@@ -18,7 +18,7 @@ package common
 
 import "strings"
 
-// stringResource is there to satisfy the github.com/google/go-containerregistry/pkg/authn.Resource interface.
+// StringResource is there to satisfy the github.com/google/go-containerregistry/pkg/authn.Resource interface.
 // It merely wraps a given string and returns it for all of the interface's methods.
 type StringResource struct {
 	Registry string
