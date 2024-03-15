@@ -1401,8 +1401,9 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, err
 		}
 
+		trustPolicy := notation.CleanTrustPolicy(&doc, ctrl.LoggerFrom(ctx))
 		defaultNotaryOciOpts := []notation.Options{
-			notation.WithTrustStore(&doc),
+			notation.WithTrustStore(trustPolicy),
 			notation.WithRemoteOptions(verifyOpts...),
 			notation.WithAuth(clientOpts.Authenticator),
 			notation.WithKeychain(clientOpts.Keychain),

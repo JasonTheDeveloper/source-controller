@@ -71,7 +71,7 @@ func WithInsecureRegistry(insecure bool) Options {
 // WithTrustStore sets the trust store configuration.
 func WithTrustStore(trustStore *trustpolicy.Document) Options {
 	return func(opts *options) {
-		opts.trustPolicy = trustStore
+		opts.trustPolicy = cleanTrustPolicy(trustStore, opts.logger)
 	}
 }
 
@@ -165,7 +165,7 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 		cert: o.rootCertificate,
 	}
 
-	trustpolicy := cleanTrustPolicy(o.trustPolicy, o.logger)
+	trustpolicy := o.trustPolicy
 	if trustpolicy == nil {
 		return nil, fmt.Errorf("trust policy cannot be empty")
 	}
@@ -185,7 +185,7 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 	}, nil
 }
 
-// cleanTrustPolicy cleans the given trust policy by removing trust stores and trusted identities
+// CleanTrustPolicy cleans the given trust policy by removing trust stores and trusted identities
 // for trust policy statements that are set to skip signature verification but still have configured trust stores and/or trusted identities.
 // It takes a pointer to a trustpolicy.Document and a logger from the logr package as input parameters.
 // If the trustPolicy is nil, it returns nil.
@@ -193,7 +193,7 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 // SignatureVerification.VerificationLevel is set to trustpolicy.LevelSkip.Name.
 // If it is, it logs a warning message and removes the trust stores and trusted identities for that trust policy statement.
 // Finally, it returns the modified trustPolicy.
-func cleanTrustPolicy(trustPolicy *trustpolicy.Document, logger logr.Logger) *trustpolicy.Document {
+func CleanTrustPolicy(trustPolicy *trustpolicy.Document, logger logr.Logger) *trustpolicy.Document {
 	if trustPolicy == nil {
 		return nil
 	}

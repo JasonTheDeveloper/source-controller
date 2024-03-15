@@ -330,7 +330,7 @@ func TestCleanTrustPolicy(t *testing.T) {
 			logger := logr.New(l)
 
 			if tc.want == nil {
-				cleanedPolicy := cleanTrustPolicy(nil, logger)
+				cleanedPolicy := CleanTrustPolicy(nil, logger)
 				if !reflect.DeepEqual(cleanedPolicy, tc.want) {
 					t.Errorf("got %#v, want %#v", cleanedPolicy, tc.want)
 				}
@@ -342,7 +342,7 @@ func TestCleanTrustPolicy(t *testing.T) {
 				TrustPolicies: tc.policy,
 			}
 
-			cleanedPolicy := cleanTrustPolicy(&policy, logger)
+			cleanedPolicy := CleanTrustPolicy(&policy, logger)
 
 			if !reflect.DeepEqual(cleanedPolicy, tc.want) {
 				t.Errorf("got %#v, want %#v", cleanedPolicy, tc.want)
