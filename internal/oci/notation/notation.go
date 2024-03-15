@@ -193,7 +193,7 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 // SignatureVerification.VerificationLevel is set to trustpolicy.LevelSkip.Name.
 // If it is, it logs a warning message and removes the trust stores and trusted identities for that trust policy statement.
 // Finally, it returns the modified trustPolicy.
-func CleanTrustPolicy(trustPolicy *trustpolicy.Document, logger logr.Logger) *trustpolicy.Document {
+func cleanTrustPolicy(trustPolicy *trustpolicy.Document, logger logr.Logger) *trustpolicy.Document {
 	if trustPolicy == nil {
 		return nil
 	}
