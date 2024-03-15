@@ -71,7 +71,7 @@ func WithInsecureRegistry(insecure bool) Options {
 // WithTrustStore sets the trust store configuration.
 func WithTrustStore(trustStore *trustpolicy.Document) Options {
 	return func(opts *options) {
-		opts.trustPolicy = cleanTrustPolicy(trustStore, opts.logger)
+		opts.trustPolicy = trustStore
 	}
 }
 
