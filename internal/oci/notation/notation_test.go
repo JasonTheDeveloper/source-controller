@@ -283,7 +283,7 @@ func TestCleanTrustPolicy(t *testing.T) {
 			wantLogMessage: "warning: trust policy statement 'test-statement-name' is set to skip signature verification but configured with trust stores and/or trusted identities. Removing trust stores and trusted identities",
 		},
 		{
-			name: "trust policy with multiple policies and mixture of verification levels including ship",
+			name: "trust policy with multiple policies and mixture of verification levels including skip",
 			policy: []trustpolicy.TrustPolicy{
 				{
 					Name:                  "test-statement-name",
