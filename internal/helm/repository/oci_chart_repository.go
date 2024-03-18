@@ -359,13 +359,13 @@ func getLastMatchingVersionOrConstraint(cvs []string, ver string) (string, error
 // VerifyChart verifies the chart against a signature.
 // If no signature is provided, a keyless verification is performed.
 // It returns an error on failure.
-func (r *OCIChartRepository) VerifyChart(ctx context.Context, chart *repo.ChartVersion) error {
+func (r *OCIChartRepository) VerifyChart(ctx context.Context, chart *repo.ChartVersion) (oci.VerificationResult, error) {
 	if len(r.verifiers) == 0 {
-		return fmt.Errorf("no verifiers available")
+		return oci.VerificationResultFailed, fmt.Errorf("no verifiers available")
 	}
 
 	if len(chart.URLs) == 0 {
-		return fmt.Errorf("chart '%s' has no downloadable URLs", chart.Name)
+		return oci.VerificationResultFailed, fmt.Errorf("chart '%s' has no downloadable URLs", chart.Name)
 	}
 
 	var nameOpts []name.Option
@@ -375,17 +375,17 @@ func (r *OCIChartRepository) VerifyChart(ctx context.Context, chart *repo.ChartV
 
 	ref, err := name.ParseReference(strings.TrimPrefix(chart.URLs[0], fmt.Sprintf("%s://", registry.OCIScheme)), nameOpts...)
 	if err != nil {
-		return fmt.Errorf("invalid chart reference: %s", err)
+		return oci.VerificationResultFailed, fmt.Errorf("invalid chart reference: %s", err)
 	}
 
 	// verify the chart
 	for _, verifier := range r.verifiers {
-		if verified, err := verifier.Verify(ctx, ref); err != nil {
-			return fmt.Errorf("failed to verify %s: %w", chart.URLs[0], err)
-		} else if verified != oci.VerificationResultFailed {
-			return nil
+		verified, err := verifier.Verify(ctx, ref)
+		if err != nil {
+			return verified, fmt.Errorf("failed to verify %s: %w", chart.URLs[0], err)
 		}
+		return verified, nil
 	}
 
-	return fmt.Errorf("no matching signatures were found for '%s'", ref.Name())
+	return oci.VerificationResultFailed, fmt.Errorf("no matching signatures were found for '%s'", ref.Name())
 }
