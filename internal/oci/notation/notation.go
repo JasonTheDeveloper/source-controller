@@ -201,7 +201,7 @@ func CleanTrustPolicy(trustPolicy *trustpolicy.Document, logger logr.Logger) *tr
 	for i, j := range trustPolicy.TrustPolicies {
 		if j.SignatureVerification.VerificationLevel == trustpolicy.LevelSkip.Name {
 			if len(j.TrustStores) > 0 || len(j.TrustedIdentities) > 0 {
-				logger.Info(fmt.Sprintf("warning: trust policy statement '%s' is set to skip signature verification but configured with trust stores and/or trusted identities. Removing trust stores and trusted identities", j.Name))
+				logger.Info(fmt.Sprintf("warning: trust policy statement '%s' is set to skip signature verification but configured with trust stores and/or trusted identities. Ignoring trust stores and trusted identities", j.Name))
 			}
 			trustPolicy.TrustPolicies[i].TrustStores = []string{}
 			trustPolicy.TrustPolicies[i].TrustedIdentities = []string{}
