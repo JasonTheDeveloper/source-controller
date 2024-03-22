@@ -357,8 +357,9 @@ func getLastMatchingVersionOrConstraint(cvs []string, ver string) (string, error
 }
 
 // VerifyChart verifies the chart against a signature.
-// If no signature is provided, a keyless verification is performed.
-// It returns an error on failure.
+// Supports signature verification using either cosign or notation providers.
+// If no signature is provided, when cosign is used, a keyless verification is performed.
+// The verification result is returned as a VerificationResult and any error encountered.
 func (r *OCIChartRepository) VerifyChart(ctx context.Context, chart *repo.ChartVersion) (oci.VerificationResult, error) {
 	if len(r.verifiers) == 0 {
 		return oci.VerificationResultFailed, fmt.Errorf("no verifiers available")

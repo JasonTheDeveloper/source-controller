@@ -22,11 +22,17 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 )
 
+// VerificationResult represents the result of a verification process.
 type VerificationResult string
 
 const (
+	// VerificationResultSuccess indicates that the artifact has been verified.
 	VerificationResultSuccess VerificationResult = "verified"
-	VerificationResultFailed  VerificationResult = "unverified"
+	// VerificationResultFailed indicates that the artifact could not be verified.
+	VerificationResultFailed VerificationResult = "unverified"
+	// VerificationResultIgnored indicates that the artifact has not been verified
+	// but is allowed to proceed. This is used primarily when notation is used
+	// as the verifier.
 	VerificationResultIgnored VerificationResult = "ignored"
 )
 

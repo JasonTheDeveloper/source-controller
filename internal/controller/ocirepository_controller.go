@@ -616,8 +616,11 @@ func (r *OCIRepositoryReconciler) digestFromRevision(revision string) string {
 }
 
 // verifySignature verifies the authenticity of the given image reference URL.
+// It supports two different verification providers: cosign and notation.
 // First, it tries to use a key if a Secret with a valid public key is provided.
-// If not, it falls back to a keyless approach for verification.
+// If not, when using cosign it falls back to a keyless approach for verification.
+// When notation is used, a trust policy is required to verify the image.
+// The verification result is returned as a VerificationResult and any error encountered.
 func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv1.OCIRepository, ref name.Reference, keychain authn.Keychain, auth authn.Authenticator, opt ...remote.Option) (soci.VerificationResult, error) {
 	ctxTimeout, cancel := context.WithTimeout(ctx, obj.Spec.Timeout.Duration)
 	defer cancel()
