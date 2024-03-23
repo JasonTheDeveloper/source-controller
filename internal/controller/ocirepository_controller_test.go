@@ -71,6 +71,7 @@ import (
 	ociv1 "github.com/fluxcd/source-controller/api/v1beta2"
 	intdigest "github.com/fluxcd/source-controller/internal/digest"
 	serror "github.com/fluxcd/source-controller/internal/error"
+	snotation "github.com/fluxcd/source-controller/internal/oci/notation"
 	sreconcile "github.com/fluxcd/source-controller/internal/reconcile"
 )
 
@@ -1482,6 +1483,8 @@ func TestOCIRepository_reconcileSource_verifyOCISourceTrustPolicyNotation(t *tes
 		wantErr               bool
 		wantErrMsg            string
 		useDigest             bool
+		usePolicyJson         bool
+		policyJson            string
 		beforeFunc            func(obj *ociv1.OCIRepository, tag, revision string)
 		assertConditions      []metav1.Condition
 	}{
@@ -1560,6 +1563,54 @@ func TestOCIRepository_reconcileSource_verifyOCISourceTrustPolicyNotation(t *tes
 				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
 			},
 		},
+		{
+			name: "valid json but empty policy json should fail verification",
+			reference: &ociv1.OCIRepositoryRef{
+				Tag: "6.1.4",
+			},
+			usePolicyJson: true,
+			policyJson:    "{}",
+			wantErr:       true,
+			wantErrMsg:    "trust policy document is missing or has empty version, it must be specified",
+			want:          sreconcile.ResultEmpty,
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, sourcev1.VerificationError, "trust policy document is missing or has empty version, it must be specified"),
+			},
+		},
+		{
+			name: "empty string should fail verification",
+			reference: &ociv1.OCIRepositoryRef{
+				Tag: "6.1.4",
+			},
+			usePolicyJson: true,
+			policyJson:    "",
+			wantErr:       true,
+			wantErrMsg:    fmt.Sprintf("error orrcured while parsing %s: unexpected end of JSON input", snotation.DefaultTrustPolicyKey),
+			want:          sreconcile.ResultEmpty,
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, sourcev1.VerificationError, fmt.Sprintf("error orrcured while parsing %s: unexpected end of JSON input", snotation.DefaultTrustPolicyKey)),
+			},
+		},
+		{
+			name: "invalid character in string should fail verification",
+			reference: &ociv1.OCIRepositoryRef{
+				Tag: "6.1.4",
+			},
+			usePolicyJson: true,
+			policyJson:    "{\"version\": \"1.0\u000A\", \"trust_policies\": []}",
+			wantErr:       true,
+			wantErrMsg:    fmt.Sprintf("error orrcured while parsing %s: invalid character '\\n' in string literal", snotation.DefaultTrustPolicyKey),
+			want:          sreconcile.ResultEmpty,
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: new revision '<revision>' for '<url>'"),
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, sourcev1.VerificationError, fmt.Sprintf("error orrcured while parsing %s: invalid character '\\n' in string literal", snotation.DefaultTrustPolicyKey)),
+			},
+		},
 	}
 
 	clientBuilder := fakeclient.NewClientBuilder().
@@ -1622,21 +1673,27 @@ func TestOCIRepository_reconcileSource_verifyOCISourceTrustPolicyNotation(t *tes
 				},
 			}
 
-			policyDocument := trustpolicy.Document{
-				Version: "1.0",
-				TrustPolicies: []trustpolicy.TrustPolicy{
-					{
-						Name:                  "test-statement-name",
-						RegistryScopes:        []string{"*"},
-						SignatureVerification: tt.signatureVerification,
-						TrustStores:           tt.trustStores,
-						TrustedIdentities:     tt.trustedIdentities,
-					},
-				},
-			}
+			var policy []byte
 
-			policy, err := json.Marshal(policyDocument)
-			g.Expect(err).NotTo(HaveOccurred())
+			if !tt.usePolicyJson {
+				policyDocument := trustpolicy.Document{
+					Version: "1.0",
+					TrustPolicies: []trustpolicy.TrustPolicy{
+						{
+							Name:                  "test-statement-name",
+							RegistryScopes:        []string{"*"},
+							SignatureVerification: tt.signatureVerification,
+							TrustStores:           tt.trustStores,
+							TrustedIdentities:     tt.trustedIdentities,
+						},
+					},
+				}
+
+				policy, err = json.Marshal(policyDocument)
+				g.Expect(err).NotTo(HaveOccurred())
+			} else {
+				policy = []byte(tt.policyJson)
+			}
 
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{

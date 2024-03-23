@@ -727,7 +727,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 		var doc trustpolicy.Document
 
 		if err := json.Unmarshal(data, &doc); err != nil {
-			return soci.VerificationResultFailed, err
+			return soci.VerificationResultFailed, fmt.Errorf("error orrcured while parsing %s: %w", notation.DefaultTrustPolicyKey, err)
 		}
 
 		verifiedResult := soci.VerificationResultFailed
