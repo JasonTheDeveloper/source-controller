@@ -1404,6 +1404,18 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			return nil, err
 		}
 
+		var certs [][]byte
+
+		for k, data := range pubSecret.Data {
+			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
+				certs = append(certs, data)
+			}
+		}
+
+		if certs == nil {
+			return nil, fmt.Errorf("no certificates found in secret '%s'", verifySecret.String())
+		}
+
 		trustPolicy := notation.CleanTrustPolicy(&doc, ctrl.LoggerFrom(ctx))
 		defaultNotaryOciOpts := []notation.Options{
 			notation.WithTrustStore(trustPolicy),
@@ -1414,17 +1426,13 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 			notation.WithLogger(ctrl.LoggerFrom(ctx)),
 		}
 
-		for k, data := range pubSecret.Data {
-			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := notation.NewNotationVerifier(append(
-					defaultNotaryOciOpts,
-					notation.WithRootCertificate(data))...)
-				if err != nil {
-					return nil, err
-				}
-				verifiers = append(verifiers, verifier)
-			}
+		verifier, err := notation.NewNotationVerifier(append(
+			defaultNotaryOciOpts,
+			notation.WithRootCertificate(certs))...)
+		if err != nil {
+			return nil, err
 		}
+		verifiers = append(verifiers, verifier)
 		return verifiers, nil
 	default:
 		return nil, fmt.Errorf("unsupported verification provider: %s", obj.Spec.Verify.Provider)

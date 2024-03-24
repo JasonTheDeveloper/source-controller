@@ -49,7 +49,7 @@ const DefaultTrustPolicyKey = "trustpolicy.json"
 
 // options is a struct that holds options for verifier.
 type options struct {
-	rootCertificate []byte
+	rootCertificate [][]byte
 	rOpt            []remote.Option
 	trustPolicy     *trustpolicy.Document
 	auth            authn.Authenticator
@@ -77,10 +77,10 @@ func WithTrustStore(trustStore *trustpolicy.Document) Options {
 
 // WithRootCertificate is a functional option for overriding the default
 // rootCertificate options used by the verifier to set the root CA certificate for notary.
-// It takes in the certificate data as a byte slice.
+// It takes in a list of certificate data as an array of byte slices.
 // The function returns a options function option that sets the public certificate
 // in the notation options.
-func WithRootCertificate(data []byte) Options {
+func WithRootCertificate(data [][]byte) Options {
 	return func(opts *options) {
 		opts.rootCertificate = data
 	}
@@ -135,20 +135,25 @@ var _ truststore.X509TrustStore = &trustStore{}
 // The reason for implementing the interface here is to avoid reading the certificate from disk
 // as the certificate is already available in memory.
 type trustStore struct {
-	cert []byte
+	cert [][]byte
 }
 
 // GetCertificates implements truststore.X509TrustStore.
 func (s trustStore) GetCertificates(ctx context.Context, storeType truststore.Type, namedStore string) ([]*x509.Certificate, error) {
-	raw := s.cert
-	block, _ := pem.Decode(raw)
-	if block != nil {
-		raw = block.Bytes
-	}
+	certs := []*x509.Certificate{}
+	for _, data := range s.cert {
+		raw := data
+		block, _ := pem.Decode(raw)
+		if block != nil {
+			raw = block.Bytes
+		}
 
-	certs, err := x509.ParseCertificates(raw)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate '%s': %s", namedStore, err)
+		cert, err := x509.ParseCertificates(raw)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse certificate '%s': %s", namedStore, err)
+		}
+
+		certs = append(certs, cert...)
 	}
 
 	return certs, nil

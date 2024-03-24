@@ -36,7 +36,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	gcrv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	notationgo "github.com/notaryproject/notation-go"
 	"github.com/notaryproject/notation-go/verifier/trustpolicy"
 	"github.com/sigstore/cosign/v2/pkg/cosign"
 	corev1 "k8s.io/api/core/v1"
@@ -730,7 +729,17 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			return soci.VerificationResultFailed, fmt.Errorf("error orrcured while parsing %s: %w", notation.DefaultTrustPolicyKey, err)
 		}
 
-		verifiedResult := soci.VerificationResultFailed
+		var certs [][]byte
+
+		for k, data := range pubSecret.Data {
+			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
+				certs = append(certs, data)
+			}
+		}
+
+		if certs == nil {
+			return soci.VerificationResultFailed, fmt.Errorf("no certificates found in secret '%s'", verifySecret.String())
+		}
 
 		trustPolicy := notation.CleanTrustPolicy(&doc, ctrl.LoggerFrom(ctx))
 		defaultNotationOciOpts := []notation.Options{
@@ -742,35 +751,23 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			notation.WithLogger(ctrl.LoggerFrom(ctx)),
 		}
 
-		for k, data := range pubSecret.Data {
-			if strings.HasSuffix(k, ".crt") || strings.HasSuffix(k, ".pem") {
-				verifier, err := notation.NewNotationVerifier(append(
-					defaultNotationOciOpts,
-					notation.WithRootCertificate(data))...)
-				if err != nil {
-					return soci.VerificationResultFailed, err
-				}
-
-				result, err := verifier.Verify(ctxTimeout, ref)
-				if err != nil {
-					if errors.As(err, &notationgo.ErrorSignatureRetrievalFailed{}) {
-						continue
-					}
-					return result, err
-				}
-
-				if result != soci.VerificationResultFailed {
-					verifiedResult = result
-					break
-				}
-			}
+		verifier, err := notation.NewNotationVerifier(append(
+			defaultNotationOciOpts,
+			notation.WithRootCertificate(certs))...)
+		if err != nil {
+			return soci.VerificationResultFailed, err
 		}
 
-		if verifiedResult == soci.VerificationResultFailed {
+		result, err := verifier.Verify(ctxTimeout, ref)
+		if err != nil {
+			return result, err
+		}
+
+		if result == soci.VerificationResultFailed {
 			return soci.VerificationResultFailed, fmt.Errorf("no matching signatures were found for '%s'", ref)
 		}
 
-		return verifiedResult, nil
+		return result, nil
 	}
 
 	return soci.VerificationResultSuccess, nil

@@ -379,13 +379,22 @@ func (r *OCIChartRepository) VerifyChart(ctx context.Context, chart *repo.ChartV
 		return oci.VerificationResultFailed, fmt.Errorf("invalid chart reference: %s", err)
 	}
 
+	verificationResult := oci.VerificationResultFailed
+
 	// verify the chart
 	for _, verifier := range r.verifiers {
-		verified, err := verifier.Verify(ctx, ref)
+		result, err := verifier.Verify(ctx, ref)
 		if err != nil {
-			return verified, fmt.Errorf("failed to verify %s: %w", chart.URLs[0], err)
+			return result, fmt.Errorf("failed to verify %s: %w", chart.URLs[0], err)
 		}
-		return verified, nil
+		if result == oci.VerificationResultSuccess {
+			return result, nil
+		}
+		verificationResult = result
+	}
+
+	if verificationResult == oci.VerificationResultIgnored {
+		return verificationResult, nil
 	}
 
 	return oci.VerificationResultFailed, fmt.Errorf("no matching signatures were found for '%s'", ref.Name())

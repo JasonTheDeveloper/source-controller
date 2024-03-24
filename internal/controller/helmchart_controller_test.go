@@ -75,6 +75,7 @@ import (
 	"github.com/fluxcd/source-controller/internal/helm/chart/secureloader"
 	"github.com/fluxcd/source-controller/internal/helm/registry"
 	"github.com/fluxcd/source-controller/internal/oci"
+	snotation "github.com/fluxcd/source-controller/internal/oci/notation"
 	sreconcile "github.com/fluxcd/source-controller/internal/reconcile"
 	"github.com/fluxcd/source-controller/internal/reconcile/summarize"
 )
@@ -2799,6 +2800,9 @@ func TestHelmChartReconciler_reconcileSourceFromOCI_verifySignatureNotation(t *t
 		want             sreconcile.Result
 		wantErr          bool
 		wantErrMsg       string
+		addMultipleCerts bool
+		provideNoCert    bool
+		provideNoPolicy  bool
 		assertConditions []metav1.Condition
 		cleanFunc        func(g *WithT, build *chart.Build)
 	}{
@@ -2842,6 +2846,27 @@ func TestHelmChartReconciler_reconcileSourceFromOCI_verifySignatureNotation(t *t
 			},
 		},
 		{
+			name:             "multiple certs should still pass verification",
+			addMultipleCerts: true,
+			beforeFunc: func(obj *helmv1.HelmChart) {
+				obj.Spec.Chart = metadata.Name
+				obj.Spec.Version = metadata.Version
+				obj.Spec.Verify = &helmv1.OCIRepositoryVerification{
+					Provider:  "notation",
+					SecretRef: &meta.LocalObjectReference{Name: "notation-config"},
+				}
+			},
+			want: sreconcile.ResultSuccess,
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(sourcev1.SourceVerifiedCondition, meta.SucceededReason, "verified signature of version <version>"),
+				*conditions.TrueCondition(meta.ReconcilingCondition, meta.ProgressingReason, "building artifact: pulled '<name>' chart with version '<version>'"),
+				*conditions.UnknownCondition(meta.ReadyCondition, meta.ProgressingReason, "building artifact: pulled '<name>' chart with version '<version>'"),
+			},
+			cleanFunc: func(g *WithT, build *chart.Build) {
+				g.Expect(os.Remove(build.Path)).To(Succeed())
+			},
+		},
+		{
 			name: "verify failed before, removed from spec, remove condition",
 			beforeFunc: func(obj *helmv1.HelmChart) {
 				obj.Spec.Chart = metadata.Name
@@ -2858,6 +2883,45 @@ func TestHelmChartReconciler_reconcileSourceFromOCI_verifySignatureNotation(t *t
 			},
 			cleanFunc: func(g *WithT, build *chart.Build) {
 				g.Expect(os.Remove(build.Path)).To(Succeed())
+			},
+		},
+		{
+			name: "no cert provided should not pass verification",
+			beforeFunc: func(obj *helmv1.HelmChart) {
+				obj.Spec.Chart = metadata.Name
+				obj.Spec.Version = metadata.Version
+				obj.Spec.Verify = &helmv1.OCIRepositoryVerification{
+					Provider:  "notation",
+					SecretRef: &meta.LocalObjectReference{Name: "notation-config"},
+				}
+			},
+			wantErr:       true,
+			provideNoCert: true,
+			// no namespace but the namespace name should appear before the /notation-config
+			wantErrMsg: "failed to verify the signature using provider 'notation': no certificates found in secret '/notation-config'",
+			want:       sreconcile.ResultEmpty,
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(sourcev1.FetchFailedCondition, "Unknown", "failed to verify the signature using provider 'notation': no certificates found in secret '/notation-config'"),
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, sourcev1.VerificationError, "failed to verify the signature using provider 'notation': no certificates found in secret '/notation-config'"),
+			},
+		},
+		{
+			name: "empty string should fail verification",
+			beforeFunc: func(obj *helmv1.HelmChart) {
+				obj.Spec.Chart = metadata.Name
+				obj.Spec.Version = metadata.Version
+				obj.Spec.Verify = &helmv1.OCIRepositoryVerification{
+					Provider:  "notation",
+					SecretRef: &meta.LocalObjectReference{Name: "notation-config"},
+				}
+			},
+			provideNoPolicy: true,
+			wantErr:         true,
+			wantErrMsg:      fmt.Sprintf("failed to verify the signature using provider 'notation': '%s' not found in secret '/notation-config'", snotation.DefaultTrustPolicyKey),
+			want:            sreconcile.ResultEmpty,
+			assertConditions: []metav1.Condition{
+				*conditions.TrueCondition(sourcev1.FetchFailedCondition, "Unknown", fmt.Sprintf("failed to verify the signature using provider 'notation': '%s' not found in secret '/notation-config'", snotation.DefaultTrustPolicyKey)),
+				*conditions.FalseCondition(sourcev1.SourceVerifiedCondition, sourcev1.VerificationError, fmt.Sprintf("failed to verify the signature using provider 'notation': '%s' not found in secret '/notation-config'", snotation.DefaultTrustPolicyKey)),
 			},
 		},
 	}
@@ -2884,14 +2948,28 @@ func TestHelmChartReconciler_reconcileSourceFromOCI_verifySignatureNotation(t *t
 			policy, err := json.Marshal(policyDocument)
 			g.Expect(err).NotTo(HaveOccurred())
 
+			data := map[string][]byte{}
+
+			if tt.addMultipleCerts {
+				data["a.crt"] = testhelper.GetRSASelfSignedSigningCertTuple("a not used for signing").Cert.Raw
+				data["b.crt"] = testhelper.GetRSASelfSignedSigningCertTuple("b not used for signing").Cert.Raw
+				data["c.crt"] = testhelper.GetRSASelfSignedSigningCertTuple("c not used for signing").Cert.Raw
+			}
+
+			if !tt.provideNoCert {
+				data["notation.crt"] = certTuple.Cert.Raw
+			}
+
+			if !tt.provideNoPolicy {
+				data["trustpolicy.json"] = policy
+			}
+
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "notation-config",
 				},
-				Data: map[string][]byte{
-					"notation.crt":     certTuple.Cert.Raw,
-					"trustpolicy.json": policy,
-				}}
+				Data: data,
+			}
 
 			caSecret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{

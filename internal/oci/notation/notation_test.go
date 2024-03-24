@@ -45,9 +45,9 @@ func TestOptions(t *testing.T) {
 		},
 		{
 			name: "signature option",
-			opts: []Options{WithRootCertificate([]byte("foo"))},
+			opts: []Options{WithRootCertificate([][]byte{[]byte("foo")})},
 			want: &options{
-				rootCertificate: []byte("foo"),
+				rootCertificate: [][]byte{[]byte("foo")},
 				rOpt:            nil,
 			},
 		},
