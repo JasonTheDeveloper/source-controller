@@ -353,8 +353,6 @@ func TestCleanTrustPolicy(t *testing.T) {
 }
 
 func TestOutcomeChecker(t *testing.T) {
-	g := NewWithT(t)
-
 	testCases := []struct {
 		name                   string
 		outcome                []*notation.VerificationOutcome
@@ -434,6 +432,8 @@ func TestOutcomeChecker(t *testing.T) {
 	// Run the test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
 			l := &testLogger{[]string{}, logr.RuntimeInfo{CallDepth: 1}}
 			logger := logr.New(l)
 
