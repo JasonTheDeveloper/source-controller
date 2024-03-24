@@ -280,7 +280,7 @@ func TestCleanTrustPolicy(t *testing.T) {
 					},
 				},
 			},
-			wantLogMessage: "warning: trust policy statement 'test-statement-name' is set to skip signature verification but configured with trust stores and/or trusted identities. Removing trust stores and trusted identities",
+			wantLogMessage: "warning: trust policy statement 'test-statement-name' is set to skip signature verification but configured with trust stores and/or trusted identities. Ignoring trust stores and trusted identities",
 		},
 		{
 			name: "trust policy with multiple policies and mixture of verification levels including skip",
@@ -319,7 +319,7 @@ func TestCleanTrustPolicy(t *testing.T) {
 					},
 				},
 			},
-			wantLogMessage: "warning: trust policy statement 'test-statement-name-2' is set to skip signature verification but configured with trust stores and/or trusted identities. Removing trust stores and trusted identities",
+			wantLogMessage: "warning: trust policy statement 'test-statement-name-2' is set to skip signature verification but configured with trust stores and/or trusted identities. Ignoring trust stores and trusted identities",
 		},
 	}
 
@@ -329,20 +329,16 @@ func TestCleanTrustPolicy(t *testing.T) {
 			l := &testLogger{[]string{}, logr.RuntimeInfo{CallDepth: 1}}
 			logger := logr.New(l)
 
-			if tc.want == nil {
-				cleanedPolicy := CleanTrustPolicy(nil, logger)
-				if !reflect.DeepEqual(cleanedPolicy, tc.want) {
-					t.Errorf("got %#v, want %#v", cleanedPolicy, tc.want)
+			var policy *trustpolicy.Document
+
+			if tc.policy != nil {
+				policy = &trustpolicy.Document{
+					Version:       "1.0",
+					TrustPolicies: tc.policy,
 				}
-				return
 			}
 
-			policy := trustpolicy.Document{
-				Version:       "1.0",
-				TrustPolicies: tc.policy,
-			}
-
-			cleanedPolicy := CleanTrustPolicy(&policy, logger)
+			cleanedPolicy := CleanTrustPolicy(policy, logger)
 
 			if !reflect.DeepEqual(cleanedPolicy, tc.want) {
 				t.Errorf("got %#v, want %#v", cleanedPolicy, tc.want)
