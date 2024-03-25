@@ -753,7 +753,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		verifier, err := notation.NewNotationVerifier(append(
 			defaultNotationOciOpts,
-			notation.WithRootCertificate(certs))...)
+			notation.WithRootCertificates(certs))...)
 		if err != nil {
 			return soci.VerificationResultFailed, err
 		}

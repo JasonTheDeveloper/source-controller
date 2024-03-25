@@ -49,13 +49,13 @@ const DefaultTrustPolicyKey = "trustpolicy.json"
 
 // options is a struct that holds options for verifier.
 type options struct {
-	rootCertificate [][]byte
-	rOpt            []remote.Option
-	trustPolicy     *trustpolicy.Document
-	auth            authn.Authenticator
-	keychain        authn.Keychain
-	insecure        bool
-	logger          logr.Logger
+	rootCertificates [][]byte
+	rOpt             []remote.Option
+	trustPolicy      *trustpolicy.Document
+	auth             authn.Authenticator
+	keychain         authn.Keychain
+	insecure         bool
+	logger           logr.Logger
 }
 
 // Options is a function that configures the options applied to a Verifier.
@@ -75,14 +75,14 @@ func WithTrustStore(trustStore *trustpolicy.Document) Options {
 	}
 }
 
-// WithRootCertificate is a functional option for overriding the default
+// WithRootCertificates is a functional option for overriding the default
 // rootCertificate options used by the verifier to set the root CA certificate for notary.
 // It takes in a list of certificate data as an array of byte slices.
 // The function returns a options function option that sets the public certificate
 // in the notation options.
-func WithRootCertificate(data [][]byte) Options {
+func WithRootCertificates(data [][]byte) Options {
 	return func(opts *options) {
-		opts.rootCertificate = data
+		opts.rootCertificates = data
 	}
 }
 
@@ -135,13 +135,13 @@ var _ truststore.X509TrustStore = &trustStore{}
 // The reason for implementing the interface here is to avoid reading the certificate from disk
 // as the certificate is already available in memory.
 type trustStore struct {
-	cert [][]byte
+	certs [][]byte
 }
 
 // GetCertificates implements truststore.X509TrustStore.
 func (s trustStore) GetCertificates(ctx context.Context, storeType truststore.Type, namedStore string) ([]*x509.Certificate, error) {
 	certs := []*x509.Certificate{}
-	for _, data := range s.cert {
+	for _, data := range s.certs {
 		raw := data
 		block, _ := pem.Decode(raw)
 		if block != nil {
@@ -167,7 +167,7 @@ func NewNotationVerifier(opts ...Options) (*NotationVerifier, error) {
 	}
 
 	store := &trustStore{
-		cert: o.rootCertificate,
+		certs: o.rootCertificates,
 	}
 
 	trustpolicy := o.trustPolicy

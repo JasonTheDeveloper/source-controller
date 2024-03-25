@@ -1428,7 +1428,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 		verifier, err := notation.NewNotationVerifier(append(
 			defaultNotaryOciOpts,
-			notation.WithRootCertificate(certs))...)
+			notation.WithRootCertificates(certs))...)
 		if err != nil {
 			return nil, err
 		}
