@@ -743,7 +743,7 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 
 		trustPolicy := notation.CleanTrustPolicy(&doc, ctrl.LoggerFrom(ctx))
 		defaultNotationOciOpts := []notation.Options{
-			notation.WithTrustStore(trustPolicy),
+			notation.WithTrustPolicy(trustPolicy),
 			notation.WithRemoteOptions(opt...),
 			notation.WithAuth(auth),
 			notation.WithKeychain(keychain),

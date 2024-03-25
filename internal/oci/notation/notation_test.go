@@ -107,7 +107,7 @@ func TestOptions(t *testing.T) {
 		},
 		{
 			name: "truststore, empty document",
-			opts: []Options{WithTrustStore(&trustpolicy.Document{})},
+			opts: []Options{WithTrustPolicy(&trustpolicy.Document{})},
 			want: &options{
 				rootCertificates: nil,
 				rOpt:             nil,
@@ -116,7 +116,7 @@ func TestOptions(t *testing.T) {
 		},
 		{
 			name: "truststore, dummy document",
-			opts: []Options{WithTrustStore(dummyPolicyDocument())},
+			opts: []Options{WithTrustPolicy(dummyPolicyDocument())},
 			want: &options{
 				rootCertificates: nil,
 				rOpt:             nil,

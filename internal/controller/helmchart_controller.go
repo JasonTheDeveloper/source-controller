@@ -1418,7 +1418,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 
 		trustPolicy := notation.CleanTrustPolicy(&doc, ctrl.LoggerFrom(ctx))
 		defaultNotationOciOpts := []notation.Options{
-			notation.WithTrustStore(trustPolicy),
+			notation.WithTrustPolicy(trustPolicy),
 			notation.WithRemoteOptions(verifyOpts...),
 			notation.WithAuth(clientOpts.Authenticator),
 			notation.WithKeychain(clientOpts.Keychain),

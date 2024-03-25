@@ -68,10 +68,10 @@ func WithInsecureRegistry(insecure bool) Options {
 	}
 }
 
-// WithTrustStore sets the trust store configuration.
-func WithTrustStore(trustStore *trustpolicy.Document) Options {
+// WithTrustPolicy sets the trust policy configuration.
+func WithTrustPolicy(trustPolicy *trustpolicy.Document) Options {
 	return func(opts *options) {
-		opts.trustPolicy = trustStore
+		opts.trustPolicy = trustPolicy
 	}
 }
 
