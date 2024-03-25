@@ -768,9 +768,9 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 		}
 
 		return result, nil
+	default:
+		return soci.VerificationResultFailed, fmt.Errorf("unsupported verification provider: %s", obj.Spec.Verify.Provider)
 	}
-
-	return soci.VerificationResultSuccess, nil
 }
 
 // retrieveSecret retrieves a secret from the specified namespace with the given secret name.
