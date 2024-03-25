@@ -187,8 +187,6 @@ func TestOptions(t *testing.T) {
 }
 
 func TestCleanTrustPolicy(t *testing.T) {
-	g := NewWithT(t)
-
 	testCases := []struct {
 		name           string
 		policy         []trustpolicy.TrustPolicy
@@ -326,6 +324,8 @@ func TestCleanTrustPolicy(t *testing.T) {
 	// Run the test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
 			l := &testLogger{[]string{}, logr.RuntimeInfo{CallDepth: 1}}
 			logger := logr.New(l)
 
@@ -461,8 +461,6 @@ func TestOutcomeChecker(t *testing.T) {
 }
 
 func TestRepoUrlWithDigest(t *testing.T) {
-	g := NewWithT(t)
-
 	testCases := []struct {
 		name              string
 		repoUrl           string
@@ -499,6 +497,8 @@ func TestRepoUrlWithDigest(t *testing.T) {
 	// Run the test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+
 			l := &testLogger{[]string{}, logr.RuntimeInfo{CallDepth: 1}}
 			logger := logr.New(l)
 
