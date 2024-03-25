@@ -1401,7 +1401,7 @@ func (r *HelmChartReconciler) makeVerifiers(ctx context.Context, obj *helmv1.Hel
 		var doc trustpolicy.Document
 
 		if err := json.Unmarshal(data, &doc); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error occurred while parsing %s: %w", notation.DefaultTrustPolicyKey, err)
 		}
 
 		var certs [][]byte
