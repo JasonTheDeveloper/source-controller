@@ -749,11 +749,10 @@ func (r *OCIRepositoryReconciler) verifySignature(ctx context.Context, obj *ociv
 			notation.WithKeychain(keychain),
 			notation.WithInsecureRegistry(obj.Spec.Insecure),
 			notation.WithLogger(ctrl.LoggerFrom(ctx)),
+			notation.WithRootCertificates(certs),
 		}
 
-		verifier, err := notation.NewNotationVerifier(append(
-			defaultNotationOciOpts,
-			notation.WithRootCertificates(certs))...)
+		verifier, err := notation.NewNotationVerifier(defaultNotationOciOpts...)
 		if err != nil {
 			return soci.VerificationResultFailed, err
 		}
